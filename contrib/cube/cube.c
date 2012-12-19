@@ -47,6 +47,7 @@ PG_FUNCTION_INFO_V1(cube_dim);
 PG_FUNCTION_INFO_V1(cube_ll_coord);
 PG_FUNCTION_INFO_V1(cube_ur_coord);
 PG_FUNCTION_INFO_V1(cube_subset);
+PG_FUNCTION_INFO_V1(cube_sort_by);
 
 Datum		cube_in(PG_FUNCTION_ARGS);
 Datum		cube(PG_FUNCTION_ARGS);
@@ -61,6 +62,7 @@ Datum		cube_dim(PG_FUNCTION_ARGS);
 Datum		cube_ll_coord(PG_FUNCTION_ARGS);
 Datum		cube_ur_coord(PG_FUNCTION_ARGS);
 Datum		cube_subset(PG_FUNCTION_ARGS);
+Datum		cube_sort_by(PG_FUNCTION_ARGS);
 
 /*
 ** GiST support methods
@@ -73,6 +75,7 @@ PG_FUNCTION_INFO_V1(g_cube_penalty);
 PG_FUNCTION_INFO_V1(g_cube_picksplit);
 PG_FUNCTION_INFO_V1(g_cube_union);
 PG_FUNCTION_INFO_V1(g_cube_same);
+PG_FUNCTION_INFO_V1(g_cube_distance);
 
 Datum		g_cube_consistent(PG_FUNCTION_ARGS);
 Datum		g_cube_compress(PG_FUNCTION_ARGS);
@@ -81,6 +84,7 @@ Datum		g_cube_penalty(PG_FUNCTION_ARGS);
 Datum		g_cube_picksplit(PG_FUNCTION_ARGS);
 Datum		g_cube_union(PG_FUNCTION_ARGS);
 Datum		g_cube_same(PG_FUNCTION_ARGS);
+Datum		g_cube_distance(PG_FUNCTION_ARGS);
 
 /*
 ** B-tree support functions
@@ -141,6 +145,7 @@ void		rt_cube_size(NDBOX *a, double *sz);
 NDBOX	   *g_cube_binary_union(NDBOX *r1, NDBOX *r2, int *sizep);
 bool		g_cube_leaf_consistent(NDBOX *key, NDBOX *query, StrategyNumber strategy);
 bool		g_cube_internal_consistent(NDBOX *key, NDBOX *query, StrategyNumber strategy);
+float8		cube_sort_by_v0(NDBOX *cube, int d);
 
 /*
 ** Auxiliary funxtions
@@ -289,6 +294,13 @@ cube_subset(PG_FUNCTION_ARGS)
 
 	PG_FREE_IF_COPY(c, 0);
 	PG_RETURN_NDBOX(result);
+}
+
+Datum cube_sort_by(PG_FUNCTION_ARGS)
+{
+	NDBOX *key = PG_GETARG_NDBOX(0);
+	int d = PG_GETARG_INT32(1);
+	PG_RETURN_FLOAT8(cube_sort_by_v0(key, d));
 }
 
 Datum
@@ -648,6 +660,18 @@ g_cube_same(PG_FUNCTION_ARGS)
 	PG_RETURN_NDBOX(result);
 }
 
+// KNN
+Datum
+g_cube_distance(PG_FUNCTION_ARGS)
+{
+	GISTENTRY  *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
+	int			d = PG_GETARG_INT32(1);
+	NDBOX		*key = DatumGetNDBOX(entry->key);
+
+	PG_RETURN_FLOAT8(cube_sort_by_v0(key, d));
+}
+
+
 /*
 ** SUPPORT ROUTINES
 */
@@ -711,6 +735,20 @@ g_cube_internal_consistent(NDBOX *key,
 			retval = FALSE;
 	}
 	return (retval);
+}
+
+float8
+cube_sort_by_v0(NDBOX *cube, int d)
+{
+	bool is_min;
+	is_min = ((d % 2) == 0);
+	d = d/2;
+	if (cube->dim <= d)
+		return 0.0;
+	if (is_min)
+		return cube->x[d];
+	else
+		return 1.0 / cube->x[d + cube->dim];
 }
 
 NDBOX *
