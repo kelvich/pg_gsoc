@@ -140,12 +140,12 @@ Datum		cube_enlarge(PG_FUNCTION_ARGS);
 int32		cube_cmp_v0(NDBOX *a, NDBOX *b);
 bool		cube_contains_v0(NDBOX *a, NDBOX *b);
 bool		cube_overlap_v0(NDBOX *a, NDBOX *b);
-NDBOX	   *cube_union_v0(NDBOX *a, NDBOX *b);
+NDBOX*  cube_union_v0(NDBOX *a, NDBOX *b);
 void		rt_cube_size(NDBOX *a, double *sz);
-NDBOX	   *g_cube_binary_union(NDBOX *r1, NDBOX *r2, int *sizep);
+NDBOX*  g_cube_binary_union(NDBOX *r1, NDBOX *r2, int *sizep);
 bool		g_cube_leaf_consistent(NDBOX *key, NDBOX *query, StrategyNumber strategy);
 bool		g_cube_internal_consistent(NDBOX *key, NDBOX *query, StrategyNumber strategy);
-float8		cube_sort_by_v0(NDBOX *cube, int d);
+float8	cube_sort_by_v0(NDBOX *cube, int d);
 
 /*
 ** Auxiliary funxtions
@@ -164,6 +164,8 @@ cube_in(PG_FUNCTION_ARGS)
 {
 	char	   *str = PG_GETARG_CSTRING(0);
 	void	   *result;
+
+	printf("(1) cube_in called with: %s\n", str);
 
 	cube_scanner_init(str);
 
@@ -436,25 +438,92 @@ g_cube_union(PG_FUNCTION_ARGS)
 Datum
 g_cube_compress(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+  GISTENTRY *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
+  GISTENTRY *retval;
+  NDBOX *cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
+  NDBOX *compressed_cube;
+  int i, j, size;
+  bool point;
+  
+  printf("compress  %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
+    cube->dim, VARSIZE(cube), cube->x[0], cube->x[1], cube->x[2], cube->x[3], cube->x[4], cube->x[5]);
+
+  point = TRUE;
+  for (i = 0, j = cube->dim; i < cube->dim; i++, j++)
+  {
+    if (cube->x[i] != cube->x[j])
+      point = FALSE;
+  }
+
+  if (point)
+  {
+    printf("point \n");
+    size = offsetof(NDBOX, x[0]) + sizeof(double)*(cube->dim);
+    compressed_cube = (NDBOX *) palloc0(size);
+    printf("compessed size: %i\n", size);
+    printf("uncompessed size: %i\n", offsetof(NDBOX, x[0]) + sizeof(double)*(cube->dim)*2);
+    SET_VARSIZE(compressed_cube, size);
+    compressed_cube->dim = cube->dim;
+    compressed_cube->info = 42;
+    for (i=0; i<cube->dim; i++){
+      compressed_cube->x[i] = cube->x[i];
+    }
+    retval = palloc(sizeof(GISTENTRY));
+    gistentryinit(*retval, PointerGetDatum(compressed_cube),
+      entry->rel, entry->page, entry->offset, FALSE);
+
+    printf("point %ib\n", VARSIZE(compressed_cube));
+  }
+  else
+  {
+    retval = entry;
+    printf("box %ib\n", VARSIZE(cube));
+  }
+
+  printf("\n");
+  PG_RETURN_POINTER(retval);
 }
 
 Datum
 g_cube_decompress(PG_FUNCTION_ARGS)
 {
-	GISTENTRY  *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
-	NDBOX	   *key = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
+	GISTENTRY *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
+  GISTENTRY *retval;
+	NDBOX	*compressed_cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
+  NDBOX *cube;
+  int i, size;
 
-	if (key != DatumGetNDBOX(entry->key))
-	{
-		GISTENTRY  *retval = (GISTENTRY *) palloc(sizeof(GISTENTRY));
+  printf("decompress:  %id, %ib (%f, %f, %f, ...)\n", 
+    compressed_cube->dim, VARSIZE(compressed_cube), compressed_cube->x[0], compressed_cube->x[1], compressed_cube->x[2]);
 
-		gistentryinit(*retval, PointerGetDatum(key),
-					  entry->rel, entry->page,
-					  entry->offset, FALSE);
-		PG_RETURN_POINTER(retval);
-	}
-	PG_RETURN_POINTER(entry);
+  // printf("reading index entry, ");
+	if (compressed_cube != DatumGetNDBOX(entry->key))
+    printf("xoxoxoxo! \n\n\n");
+
+  if (compressed_cube->info == 42)
+  {
+    size = offsetof(NDBOX, x[0]) + sizeof(double)*(compressed_cube->dim)*2;
+    cube = (NDBOX *) palloc0(size);
+    SET_VARSIZE(cube, size);
+    cube->dim = compressed_cube->dim;
+    // cube->info += 1;
+    for (i=0; i<cube->dim; i++){
+      cube->x[i] = compressed_cube->x[i];
+      cube->x[i + cube->dim] = compressed_cube->x[i];
+    }
+    retval = palloc(sizeof(GISTENTRY));
+    gistentryinit(*retval, PointerGetDatum(cube),
+      entry->rel, entry->page, entry->offset, FALSE);
+
+    printf("  decompressed %ib -> %ib\n", VARSIZE(compressed_cube), VARSIZE(cube));
+  }
+  else
+  {
+    printf("  untouched %ib\n", VARSIZE(compressed_cube));
+    retval = entry;
+  }
+
+  PG_RETURN_POINTER(retval);
 }
 
 
@@ -521,9 +590,9 @@ g_cube_picksplit(PG_FUNCTION_ARGS)
 			   *right;
 	OffsetNumber maxoff;
 
-	/*
-	 * fprintf(stderr, "picksplit\n");
-	 */
+	
+	fprintf(stderr, "picksplit\n");
+	 
 	maxoff = entryvec->n - 2;
 	nbytes = (maxoff + 2) * sizeof(OffsetNumber);
 	v->spl_left = (OffsetNumber *) palloc(nbytes);
@@ -843,8 +912,14 @@ cube_inter(PG_FUNCTION_ARGS)
 	bool		swapped = false;
 	int			i;
 
+  printf("cube_inter  %id, %ib (%f, %f, %f, %f, %f, %f)", 
+    a->dim, VARSIZE(a), a->x[0], a->x[1], a->x[2], a->x[3], a->x[4], a->x[5]);
+  printf(" vs  %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
+    b->dim, VARSIZE(b), b->x[0], b->x[1], b->x[2], b->x[3], b->x[4], b->x[5]);
+
 	if (a->dim >= b->dim)
 	{
+    printf("setting varsize: %i\n", VARSIZE(a));
 		result = palloc0(VARSIZE(a));
 		SET_VARSIZE(result, VARSIZE(a));
 		result->dim = a->dim;
@@ -872,8 +947,13 @@ cube_inter(PG_FUNCTION_ARGS)
 	 */
 	for (i = 0; i < b->dim; i++)
 	{
-		result->x[i] = Min(b->x[i], b->x[i + b->dim]);
-		result->x[i + a->dim] = Max(b->x[i], b->x[i + b->dim]);
+		result->x[i] = 
+      Min(b->x[i], 
+        b->x[i + b->dim]);
+
+		result->x[i + a->dim] = 
+      Max(b->x[i], 
+        b->x[i + b->dim]);
 	}
 	for (i = b->dim; i < a->dim; i++)
 	{
@@ -904,6 +984,7 @@ cube_inter(PG_FUNCTION_ARGS)
 	/*
 	 * Is it OK to return a non-null intersection for non-overlapping boxes?
 	 */
+  printf("\n");
 	PG_RETURN_NDBOX(result);
 }
 

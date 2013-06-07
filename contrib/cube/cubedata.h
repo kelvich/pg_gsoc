@@ -4,9 +4,10 @@
 
 typedef struct NDBOX
 {
-	int32		vl_len_;		/* varlena header (do not touch directly!) */
+	int32 vl_len_;		/* varlena header (do not touch directly!) */
 	unsigned int dim;
-	double		x[1];
+  unsigned char info;
+	double x[1];
 } NDBOX;
 
 #define DatumGetNDBOX(x)	((NDBOX*)DatumGetPointer(x))
