@@ -5,8 +5,8 @@
 typedef struct NDBOX
 {
 	int32 vl_len_;		/* varlena header (do not touch directly!) */
-	unsigned int dim;
-  unsigned char info;
+	unsigned short dim;
+  unsigned short info;
 	double x[1];
 } NDBOX;
 
