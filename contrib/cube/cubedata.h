@@ -16,6 +16,9 @@ typedef struct NDBOX
 
 
 #define IS_POINT(cube) ( cube->dim >> 31 )
-#define NDIMS(cube) ( cube->dim & 0x7fffffff )
-#define GET_COORD(cube, i) ( IS_POINT(cube) ? cube->x[i % NDIMS(cube)] : cube->x[i] )
 
+// TODO: NDIMS -> DIM
+#define NDIMS(cube) ( cube->dim & 0x7fffffff )
+
+// TODO: DRY: introduce GET_LL_COORD(cube, i) and GET_UR_COORD(cube, i)
+#define GET_COORD(cube, i) ( IS_POINT(cube) ? cube->x[i % NDIMS(cube)] : cube->x[i] )

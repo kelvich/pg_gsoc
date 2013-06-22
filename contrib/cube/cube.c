@@ -1245,30 +1245,30 @@ cube_contains_v0(NDBOX *a, NDBOX *b)
 	if ((a == NULL) || (b == NULL))
 		return (FALSE);
 
-	if (a->dim < b->dim)
+	if (NDIMS(a) < NDIMS(b))
 	{
 		/*
 		 * the further comparisons will make sense if the excess dimensions of
 		 * (b) were zeroes Since both UL and UR coordinates must be zero, we
 		 * can check them all without worrying about which is which.
 		 */
-		for (i = a->dim; i < b->dim; i++)
+		for (i = NDIMS(a); i < NDIMS(b); i++)
 		{
-			if (b->x[i] != 0)
+			if (GET_COORD(b,i) != 0)
 				return (FALSE);
-			if (b->x[i + b->dim] != 0)
+			if (GET_COORD(b, i + NDIMS(b)) != 0)
 				return (FALSE);
 		}
 	}
 
 	/* Can't care less about the excess dimensions of (a), if any */
-	for (i = 0; i < Min(a->dim, b->dim); i++)
+	for (i = 0; i < Min(NDIMS(a), NDIMS(b)); i++)
 	{
-		if (Min(a->x[i], a->x[a->dim + i]) >
-			Min(b->x[i], b->x[b->dim + i]))
+		if (Min(GET_COORD(a,i), GET_COORD(a, i + NDIMS(a))) >
+			Min(GET_COORD(b,i), GET_COORD(b, i + NDIMS(b))))
 			return (FALSE);
-		if (Max(a->x[i], a->x[a->dim + i]) <
-			Max(b->x[i], b->x[b->dim + i]))
+		if (Max(GET_COORD(a,i), GET_COORD(a, i + NDIMS(a))) <
+			Max(GET_COORD(b,i), GET_COORD(b, i + NDIMS(b))))
 			return (FALSE);
 	}
 
