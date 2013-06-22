@@ -14,11 +14,8 @@ typedef struct NDBOX
 #define PG_GETARG_NDBOX(x)	DatumGetNDBOX( PG_DETOAST_DATUM(PG_GETARG_DATUM(x)) )
 #define PG_RETURN_NDBOX(x)	PG_RETURN_POINTER(x)
 
-
 #define IS_POINT(cube) ( cube->dim >> 31 )
 
-// TODO: NDIMS -> DIM
-#define NDIMS(cube) ( cube->dim & 0x7fffffff )
-
-// TODO: DRY: introduce GET_LL_COORD(cube, i) and GET_UR_COORD(cube, i)
-#define GET_COORD(cube, i) ( IS_POINT(cube) ? cube->x[i % NDIMS(cube)] : cube->x[i] )
+#define DIM(cube) ( cube->dim & 0x7fffffff )
+#define LL_COORD(cube, i) ( cube->x[i] )
+#define UR_COORD(cube, i) ( IS_POINT(cube) ? cube->x[i] : cube->x[i + DIM(cube)] )

@@ -1054,43 +1054,43 @@ cube_cmp_v0(NDBOX *a, NDBOX *b)
 
   fprintf(stderr, "cube_cmp_v0\n");
 
-	dim = Min(NDIMS(a), NDIMS(b));
+	dim = Min(DIM(a), DIM(b));
 
 	/* compare the common dimensions */
 	for (i = 0; i < dim; i++)
 	{
-		if (Min(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) >
-			Min(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)))
+		if (Min(LL_COORD(a, i), UR_COORD(a, i)) >
+			Min(LL_COORD(b, i), UR_COORD(b, i)))
 			return 1;
-		if (Min(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) <
-      Min(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)))
+		if (Min(LL_COORD(a, i), UR_COORD(a, i)) <
+      Min(LL_COORD(b, i), UR_COORD(b, i)))
 			return -1;
 	}
 	for (i = 0; i < dim; i++)
 	{
-		if (Max(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) >
-			Max(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)))
+		if (Max(LL_COORD(a, i), UR_COORD(a, i)) >
+			Max(LL_COORD(b, i), UR_COORD(b, i)))
 			return 1;
-		if (Max(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) <
-			Max(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)))
+		if (Max(LL_COORD(a, i), UR_COORD(a, i)) <
+			Max(LL_COORD(b, i), UR_COORD(b, i)))
 			return -1;
 	}
 
 	/* compare extra dimensions to zero */
-	if (NDIMS(a) > NDIMS(b))
+	if (DIM(a) > DIM(b))
 	{
-		for (i = dim; i < NDIMS(a); i++)
+		for (i = dim; i < DIM(a); i++)
 		{
-			if (Min(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) > 0)
+			if (Min(LL_COORD(a, i), UR_COORD(a, i)) > 0)
 				return 1;
-			if (Min(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) < 0)
+			if (Min(LL_COORD(a, i), UR_COORD(a, i)) < 0)
 				return -1;
 		}
-		for (i = dim; i < NDIMS(a); i++)
+		for (i = dim; i < DIM(a); i++)
 		{
-			if (Max(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) > 0)
+			if (Max(LL_COORD(a, i), UR_COORD(a, i)) > 0)
 				return 1;
-			if (Max(GET_COORD(a, i), GET_COORD(a, NDIMS(a) + i)) < 0)
+			if (Max(LL_COORD(a, i), UR_COORD(a, i)) < 0)
 				return -1;
 		}
 
@@ -1100,20 +1100,20 @@ cube_cmp_v0(NDBOX *a, NDBOX *b)
 		 */
 		return 1;
 	}
-	if (NDIMS(a) < NDIMS(b))
+	if (DIM(a) < DIM(b))
 	{
-		for (i = dim; i < NDIMS(b); i++)
+		for (i = dim; i < DIM(b); i++)
 		{
-			if (Min(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)) > 0)
+			if (Min(LL_COORD(b, i), UR_COORD(b, i)) > 0)
 				return -1;
-			if (Min(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)) < 0)
+			if (Min(LL_COORD(b, i), UR_COORD(b, i)) < 0)
 				return 1;
 		}
-		for (i = dim; i < NDIMS(b); i++)
+		for (i = dim; i < DIM(b); i++)
 		{
-			if (Max(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)) > 0)
+			if (Max(LL_COORD(b, i), UR_COORD(b, i)) > 0)
 				return -1;
-			if (Max(GET_COORD(b, i), GET_COORD(b, NDIMS(b) + i)) < 0)
+			if (Max(LL_COORD(b, i), UR_COORD(b, i)) < 0)
 				return 1;
 		}
 
@@ -1245,30 +1245,30 @@ cube_contains_v0(NDBOX *a, NDBOX *b)
 	if ((a == NULL) || (b == NULL))
 		return (FALSE);
 
-	if (NDIMS(a) < NDIMS(b))
+	if (DIM(a) < DIM(b))
 	{
 		/*
 		 * the further comparisons will make sense if the excess dimensions of
 		 * (b) were zeroes Since both UL and UR coordinates must be zero, we
 		 * can check them all without worrying about which is which.
 		 */
-		for (i = NDIMS(a); i < NDIMS(b); i++)
+		for (i = DIM(a); i < DIM(b); i++)
 		{
-			if (GET_COORD(b,i) != 0)
+			if (LL_COORD(b,i) != 0)
 				return (FALSE);
-			if (GET_COORD(b, i + NDIMS(b)) != 0)
+			if (UR_COORD(b, i) != 0)
 				return (FALSE);
 		}
 	}
 
 	/* Can't care less about the excess dimensions of (a), if any */
-	for (i = 0; i < Min(NDIMS(a), NDIMS(b)); i++)
+	for (i = 0; i < Min(DIM(a), DIM(b)); i++)
 	{
-		if (Min(GET_COORD(a,i), GET_COORD(a, i + NDIMS(a))) >
-			Min(GET_COORD(b,i), GET_COORD(b, i + NDIMS(b))))
+		if (Min(LL_COORD(a,i), UR_COORD(a, i)) >
+			Min(LL_COORD(b,i), UR_COORD(b, i)))
 			return (FALSE);
-		if (Max(GET_COORD(a,i), GET_COORD(a, i + NDIMS(a))) <
-			Max(GET_COORD(b,i), GET_COORD(b, i + NDIMS(b))))
+		if (Max(LL_COORD(a,i), UR_COORD(a, i)) <
+			Max(LL_COORD(b,i), UR_COORD(b, i)))
 			return (FALSE);
 	}
 
