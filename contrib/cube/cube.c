@@ -316,7 +316,7 @@ cube_out(PG_FUNCTION_ARGS)
 {
 	NDBOX	   *cube = PG_GETARG_NDBOX(0);
 	StringInfoData buf;
-	int			dim = cube->dim;
+	int			dim = DIM(cube);
 	bool		equal = true;
 	int			i;
 	int			ndig;
@@ -341,8 +341,8 @@ cube_out(PG_FUNCTION_ARGS)
 	{
 		if (i > 0)
 			appendStringInfo(&buf, ", ");
-		appendStringInfo(&buf, "%.*g", ndig, cube->x[i]);
-		if (cube->x[i] != cube->x[i + dim])
+		appendStringInfo(&buf, "%.*g", ndig, LL_COORD(cube,i));
+		if (LL_COORD(cube, i) != UR_COORD(cube, i))
 			equal = false;
 	}
 	appendStringInfoChar(&buf, ')');
@@ -354,7 +354,7 @@ cube_out(PG_FUNCTION_ARGS)
 		{
 			if (i > 0)
 				appendStringInfo(&buf, ", ");
-			appendStringInfo(&buf, "%.*g", ndig, cube->x[i + dim]);
+			appendStringInfo(&buf, "%.*g", ndig, UR_COORD(cube, i));
 		}
 		appendStringInfoChar(&buf, ')');
 	}
