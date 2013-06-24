@@ -449,48 +449,13 @@ g_cube_compress(PG_FUNCTION_ARGS)
   GISTENTRY *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
   GISTENTRY *retval;
   NDBOX *cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
-  NDBOX *compressed_cube;
-  int i, j, size;
-  bool point;
 
-  fprintf(stderr, "g_cube_compress\n");
-  
-  // printf("compress  %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
-    // cube->dim, VARSIZE(cube), cube->x[0], cube->x[1], cube->x[2], cube->x[3], cube->x[4], cube->x[5]);
+  fprintf(stderr, "g_cube_compress: %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
+    DIM(cube), VARSIZE(cube),
+    LL_COORD(cube, 0), LL_COORD(cube, 1), LL_COORD(cube, 2),
+    UR_COORD(cube, 0), UR_COORD(cube, 1), UR_COORD(cube, 2));
 
-  point = TRUE;
-  for (i = 0, j = cube->dim; i < cube->dim; i++, j++)
-  {
-    if (cube->x[i] != cube->x[j])
-      point = FALSE;
-  }
-
-  if (point)
-  {
-    // printf("point \n");
-    size = offsetof(NDBOX, x[0]) + sizeof(double)*(cube->dim);
-    compressed_cube = (NDBOX *) palloc0(size);
-    // printf("compessed size: %i\n", size);
-    // printf("uncompessed size: %i\n", offsetof(NDBOX, x[0]) + sizeof(double)*(cube->dim)*2);
-    SET_VARSIZE(compressed_cube, size);
-    compressed_cube->dim = cube->dim;
-    compressed_cube->info = 42;
-    for (i=0; i<cube->dim; i++){
-      compressed_cube->x[i] = cube->x[i];
-    }
-    retval = palloc(sizeof(GISTENTRY));
-    gistentryinit(*retval, PointerGetDatum(compressed_cube),
-      entry->rel, entry->page, entry->offset, FALSE);
-
-    // printf("point %ib\n", VARSIZE(compressed_cube));
-  }
-  else
-  {
-    retval = entry;
-    // printf("box %ib\n", VARSIZE(cube));
-  }
-
-  // printf("\n");
+  retval = entry;
   PG_RETURN_POINTER(retval);
 }
 
@@ -499,42 +464,15 @@ g_cube_decompress(PG_FUNCTION_ARGS)
 {
 	GISTENTRY *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
   GISTENTRY *retval;
-	NDBOX	*compressed_cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
-  NDBOX *cube;
-  int i, size;
+	NDBOX	*cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
 
   fprintf(stderr, "g_cube_decompress\n");
 
-  // printf("decompress:  %id, %ib (%f, %f, %f, ...)\n", 
-    // compressed_cube->dim, VARSIZE(compressed_cube), compressed_cube->x[0], compressed_cube->x[1], compressed_cube->x[2]);
+  // WTF?
+	if (cube != DatumGetNDBOX(entry->key))
+    printf("wtf? \n\n\n");
 
-  // printf("reading index entry, ");
-	if (compressed_cube != DatumGetNDBOX(entry->key))
-    printf("xoxoxoxo! \n\n\n");
-
-  if (compressed_cube->info == 42)
-  {
-    size = offsetof(NDBOX, x[0]) + sizeof(double)*(compressed_cube->dim)*2;
-    cube = (NDBOX *) palloc0(size);
-    SET_VARSIZE(cube, size);
-    cube->dim = compressed_cube->dim;
-    // cube->info += 1;
-    for (i=0; i<cube->dim; i++){
-      cube->x[i] = compressed_cube->x[i];
-      cube->x[i + cube->dim] = compressed_cube->x[i];
-    }
-    retval = palloc(sizeof(GISTENTRY));
-    gistentryinit(*retval, PointerGetDatum(cube),
-      entry->rel, entry->page, entry->offset, FALSE);
-
-    // printf("  decompressed %ib -> %ib\n", VARSIZE(compressed_cube), VARSIZE(cube));
-  }
-  else
-  {
-    // printf("  untouched %ib\n", VARSIZE(compressed_cube));
-    retval = entry;
-  }
-
+  retval = entry;
   PG_RETURN_POINTER(retval);
 }
 
