@@ -827,12 +827,12 @@ cube_sort_by_v0(NDBOX *cube, int d)
 
 	is_min = ((d % 2) == 0);
 	d = d/2;
-	if (cube->dim <= d)
+	if (DIM(cube) <= d)
 		return 0.0;
 	if (is_min)
-		return cube->x[d];
+		return LL_COORD(cube,d);
 	else
-		return 1.0 / cube->x[d + cube->dim];
+		return 1.0 / UR_COORD(cube,d);
 }
 
 NDBOX *
@@ -1315,7 +1315,7 @@ cube_overlap_v0(NDBOX *a, NDBOX *b)
 		return (FALSE);
 
 	/* swap the box pointers if needed */
-	if (a->dim < b->dim)
+	if (DIM(a) < DIM(b))
 	{
 		NDBOX	   *tmp = b;
 
@@ -1324,22 +1324,20 @@ cube_overlap_v0(NDBOX *a, NDBOX *b)
 	}
 
 	/* compare within the dimensions of (b) */
-	for (i = 0; i < b->dim; i++)
+	for (i = 0; i < DIM(b); i++)
 	{
-		if (Min(a->x[i], a->x[a->dim + i]) >
-			Max(b->x[i], b->x[b->dim + i]))
+		if (Min(LL_COORD(a,i), UR_COORD(a,i)) > Max(LL_COORD(b,i), UR_COORD(b,i)))
 			return (FALSE);
-		if (Max(a->x[i], a->x[a->dim + i]) <
-			Min(b->x[i], b->x[b->dim + i]))
+		if (Max(LL_COORD(a,i), UR_COORD(a,i)) < Min(LL_COORD(b,i), UR_COORD(b,i)))
 			return (FALSE);
 	}
 
 	/* compare to zero those dimensions in (a) absent in (b) */
-	for (i = b->dim; i < a->dim; i++)
+	for (i = DIM(b); i < DIM(a); i++)
 	{
-		if (Min(a->x[i], a->x[a->dim + i]) > 0)
+		if (Min(LL_COORD(a,i), UR_COORD(a,i)) > 0)
 			return (FALSE);
-		if (Max(a->x[i], a->x[a->dim + i]) < 0)
+		if (Max(LL_COORD(a,i), UR_COORD(a,i)) < 0)
 			return (FALSE);
 	}
 
