@@ -931,26 +931,26 @@ cube_inter(PG_FUNCTION_ARGS)
 
   fprintf(stderr, "cube_inter\n");
   // printf("cube_inter  %id, %ib (%f, %f, %f, %f, %f, %f)", 
-    // a->dim, VARSIZE(a), a->x[0], a->x[1], a->x[2], a->x[3], a->x[4], a->x[5]);
+  //   a->dim, VARSIZE(a), a->x[0], a->x[1], a->x[2], a->x[3], a->x[4], a->x[5]);
   // printf(" vs  %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
-    // b->dim, VARSIZE(b), b->x[0], b->x[1], b->x[2], b->x[3], b->x[4], b->x[5]);
+  //   b->dim, VARSIZE(b), b->x[0], b->x[1], b->x[2], b->x[3], b->x[4], b->x[5]);
 
-	if (a->dim >= b->dim)
+	if (DIM(a) >= DIM(b))
 	{
     // printf("setting varsize: %i\n", VARSIZE(a));
-		result = palloc0(VARSIZE(a));
+		result = palloc0(VARSIZE(a)); // DANGER! check point case
 		SET_VARSIZE(result, VARSIZE(a));
-		result->dim = a->dim;
+		result->dim = DIM(a);
 	}
 	else
 	{
-		result = palloc0(VARSIZE(b));
+		result = palloc0(VARSIZE(b)); // DANGER! check point case
 		SET_VARSIZE(result, VARSIZE(b));
-		result->dim = b->dim;
+		result->dim = DIM(a);
 	}
 
 	/* swap the box pointers if needed */
-	if (a->dim < b->dim)
+	if (DIM(a) < DIM(b))
 	{
 		NDBOX	   *tmp = b;
 
@@ -960,32 +960,25 @@ cube_inter(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * use the potentially	smaller of the two boxes (b) to fill in the
+	 * use the potentially smaller of the two boxes (b) to fill in the
 	 * result, padding absent dimensions with zeroes
 	 */
-	for (i = 0; i < b->dim; i++)
+	for (i = 0; i < DIM(b); i++)
 	{
-		result->x[i] = 
-      Min(b->x[i], 
-        b->x[i + b->dim]);
-
-		result->x[i + a->dim] = 
-      Max(b->x[i], 
-        b->x[i + b->dim]);
+		result->x[i] = Min(LL_COORD(b,i), UR_COORD(b,i));
+		result->x[i + DIM(a)] = Max(LL_COORD(b,i), UR_COORD(b,i));
 	}
-	for (i = b->dim; i < a->dim; i++)
+	for (i = DIM(b); i < DIM(a); i++)
 	{
 		result->x[i] = 0;
-		result->x[i + a->dim] = 0;
+		result->x[i + DIM(a)] = 0;
 	}
 
 	/* compute the intersection */
-	for (i = 0; i < a->dim; i++)
+	for (i = 0; i < DIM(a); i++)
 	{
-		result->x[i] =
-			Max(Min(a->x[i], a->x[i + a->dim]), result->x[i]);
-		result->x[i + a->dim] = Min(Max(a->x[i],
-								   a->x[i + a->dim]), result->x[i + a->dim]);
+		result->x[i] = Max(Min(LL_COORD(a,i), UR_COORD(a,i)), LL_COORD(result,i));
+		result->x[i + DIM(a)] = Min(Max(LL_COORD(a,i), UR_COORD(a,i)), UR_COORD(result,i));
 	}
 
 	if (swapped)
