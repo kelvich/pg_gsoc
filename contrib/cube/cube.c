@@ -856,21 +856,21 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 
   fprintf(stderr, "cube_union_v0\n");
 
-	if (a->dim >= b->dim)
+	if (DIM(a) >= DIM(b))
 	{
 		result = palloc0(VARSIZE(a));
 		SET_VARSIZE(result, VARSIZE(a));
-		result->dim = a->dim;
+		result->dim = DIM(a);
 	}
 	else
 	{
 		result = palloc0(VARSIZE(b));
 		SET_VARSIZE(result, VARSIZE(b));
-		result->dim = b->dim;
+		result->dim = DIM(b);
 	}
 
 	/* swap the box pointers if needed */
-	if (a->dim < b->dim)
+	if (DIM(a) < DIM(b))
 	{
 		NDBOX	   *tmp = b;
 
@@ -882,24 +882,24 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 	 * use the potentially smaller of the two boxes (b) to fill in the result,
 	 * padding absent dimensions with zeroes
 	 */
-	for (i = 0; i < b->dim; i++)
+	for (i = 0; i < DIM(b); i++)
 	{
-		result->x[i] = Min(b->x[i], b->x[i + b->dim]);
-		result->x[i + a->dim] = Max(b->x[i], b->x[i + b->dim]);
+		result->x[i] = Min(LL_COORD(b,i), UR_COORD(b,i));
+		result->x[i + DIM(a)] = Max(LL_COORD(b,i), UR_COORD(b,i));
 	}
-	for (i = b->dim; i < a->dim; i++)
+	for (i = DIM(b); i < DIM(a); i++)
 	{
 		result->x[i] = 0;
-		result->x[i + a->dim] = 0;
+		result->x[i + DIM(a)] = 0;
 	}
 
 	/* compute the union */
-	for (i = 0; i < a->dim; i++)
+	for (i = 0; i < DIM(a); i++)
 	{
 		result->x[i] =
-			Min(Min(a->x[i], a->x[i + a->dim]), result->x[i]);
-		result->x[i + a->dim] = Max(Max(a->x[i],
-								   a->x[i + a->dim]), result->x[i + a->dim]);
+			Min(Min(LL_COORD(a,i), UR_COORD(a,i)), LL_COORD(result,i));
+		result->x[i + DIM(a)] =
+      Max(Max(LL_COORD(a,i), UR_COORD(a,i)), UR_COORD(result,i));
 	}
 
 	return (result);
