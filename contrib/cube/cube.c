@@ -1021,8 +1021,7 @@ cube_size(PG_FUNCTION_ARGS)
 void
 rt_cube_size(NDBOX *a, double *size)
 {
-	int			i,
-				j;
+	int i;
 
   fprintf(stderr, "rt_cube_size\n");
 
@@ -1031,8 +1030,8 @@ rt_cube_size(NDBOX *a, double *size)
 	else
 	{
 		*size = 1.0;
-		for (i = 0, j = a->dim; i < a->dim; i++, j++)
-			*size = (*size) * Abs((a->x[j] - a->x[i]));
+		for (i = 0; i < DIM(a); i++)
+			*size = (*size) * Abs(UR_COORD(a,i) - LL_COORD(a,i));
 	}
 	return;
 }
