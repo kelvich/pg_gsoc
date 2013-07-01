@@ -466,9 +466,9 @@ g_cube_compress(PG_FUNCTION_ARGS)
 {
 	GISTENTRY *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
 	GISTENTRY *retval;
-	NDBOX *cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
 
 	#ifdef TRACE
+	NDBOX *cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
 	fprintf(stderr, "g_cube_compress: %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
 		DIM(cube), VARSIZE(cube),
 		LL_COORD(cube, 0), LL_COORD(cube, 1), LL_COORD(cube, 2),
@@ -820,6 +820,10 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 	fprintf(stderr, "cube_union_v0\n");
 	#endif
 
+	// let's try to guess result for same cubes
+	if (a == b)
+		return (a);
+
 	if (DIM(a) >= DIM(b))
 	{
 		result = palloc0(CUBE_SIZE(DIM(a)));
@@ -866,9 +870,13 @@ cube_union_v0(NDBOX *a, NDBOX *b)
       Max(Max(LL_COORD(a,i), UR_COORD(a,i)), UR_COORD(result,i));
 	}
 
+	// detect points on out (3D case)
+	// better to 
 	if ((LL_COORD(result, 0) == UR_COORD(result, 0)) &&
-			(LL_COORD(result, 1) == UR_COORD(result, 1)) &&
-			(LL_COORD(result, 2) == UR_COORD(result, 2))){
+		(LL_COORD(result, 1) == UR_COORD(result, 1)) &&
+		(LL_COORD(result, 2) == UR_COORD(result, 2)))
+	{
+		fprintf(stderr, "a = %p, b = %p", a, b);
 		fprintf(stderr, "cube_union_v0  %id, %ib (%f, %f, %f, %f, %f, %f)", 
 		  a->dim, VARSIZE(a), LL_COORD(a, 0), LL_COORD(a, 1), LL_COORD(a, 2), UR_COORD(a, 0), UR_COORD(a, 1), UR_COORD(a, 2));
 		fprintf(stderr, " vs  %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
