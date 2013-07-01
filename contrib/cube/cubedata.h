@@ -6,7 +6,7 @@ typedef struct NDBOX
 {
 	int32 vl_len_;		/* varlena header (do not touch directly!) */
 	unsigned int dim;
-  unsigned short info;
+  // unsigned short info;
 	double x[1];
 } NDBOX;
 
@@ -19,3 +19,8 @@ typedef struct NDBOX
 #define DIM(cube) ( cube->dim & 0x7fffffff )
 #define LL_COORD(cube, i) ( cube->x[i] )
 #define UR_COORD(cube, i) ( IS_POINT(cube) ? cube->x[i] : cube->x[i + DIM(cube)] )
+
+#define CUBE_SIZE(dim) (offsetof(NDBOX, x[0]) + 2*sizeof(double)*dim)
+#define POINT_SIZE(dim) (offsetof(NDBOX, x[0]) + sizeof(double)*dim)
+
+// #define TRACE
