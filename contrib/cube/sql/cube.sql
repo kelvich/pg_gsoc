@@ -310,6 +310,16 @@ SELECT cube_union('(1,2),(1,2)'::cube, '(4,2),(4,2)'::cube);
 SELECT cube_union('(1,2),(1,2)'::cube, '(1,2),(1,2)'::cube);
 SELECT cube_union('(1,2),(1,2)'::cube, '(1,2,0),(1,2,0)'::cube);
 
+-- Test of cube_inter
+--
+SELECT cube_inter('(1,2),(10,11)'::cube, '(3,4), (16,15)'::cube); -- intersects
+SELECT cube_inter('(1,2),(10,11)'::cube, '(3,4), (6,5)'::cube); -- includes
+SELECT cube_inter('(1,2),(10,11)'::cube, '(13,14), (16,15)'::cube); -- no intersection
+SELECT cube_inter('(1,2),(10,11)'::cube, '(3,14), (16,15)'::cube); -- no intersection, but one dimension intersects
+SELECT cube_inter('(1,2),(10,11)'::cube, '(10,11), (16,15)'::cube); -- point intersection
+SELECT cube_inter('(1,2,3)'::cube, '(1,2,3)'::cube); -- point args
+SELECT cube_inter('(1,2,3)'::cube, '(5,6,3)'::cube); -- point args
+
 -- Load some example data and build the index
 --
 CREATE TABLE test_cube (c cube);

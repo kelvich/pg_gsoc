@@ -902,33 +902,14 @@ cube_inter(PG_FUNCTION_ARGS)
 	NDBOX	   *a = PG_GETARG_NDBOX(0);
 	NDBOX	   *b = PG_GETARG_NDBOX(1);
 	NDBOX	   *result;
-	bool		swapped = false;
+	bool		swapped = false,
+				// overlap = true,
+				point_result = true;
 	int			i;
 
 	#ifdef TRACE
 	fprintf(stderr, "cube_inter\n");
-	fprintf(stderr, "cube_inter  %id, %ib (%f, %f, %f, %f, %f, %f)", 
-		a->dim, VARSIZE(a), LL_COORD(a, 0), LL_COORD(a, 1), LL_COORD(a, 2), UR_COORD(a, 0), UR_COORD(a, 1), UR_COORD(a, 2));
-	fprintf(stderr, " vs  %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
-		b->dim, VARSIZE(b), LL_COORD(b, 0), LL_COORD(b, 1), LL_COORD(b, 2), UR_COORD(b, 0), UR_COORD(b, 1), UR_COORD(b, 2));
 	#endif
-
-	if ( (LL_COORD(a, 0) == 0.0) & (LL_COORD(b, 0) == 54.0) ){
-		fprintf(stderr, "My God, my tourniquet, Return to me salvation\n");
-	}
-
-	if (DIM(a) >= DIM(b))
-	{
-		result = (NDBOX *) palloc0(CUBE_SIZE(DIM(a)));
-		SET_VARSIZE(result, CUBE_SIZE(DIM(a)));
-		result->dim = DIM(a);
-	}
-	else
-	{
-		result = (NDBOX *) palloc0(CUBE_SIZE(DIM(b)));
-		SET_VARSIZE(result, CUBE_SIZE(DIM(b)));
-		result->dim = DIM(b);
-	}
 
 	/* swap the box pointers if needed */
 	if (DIM(a) < DIM(b))
@@ -940,26 +921,55 @@ cube_inter(PG_FUNCTION_ARGS)
 		swapped = true;
 	}
 
-	/*
-	 * use the potentially smaller of the two boxes (b) to fill in the
-	 * result, padding absent dimensions with zeroes
-	 */
+	result = (NDBOX *) palloc0(CUBE_SIZE(DIM(a)));
+	SET_VARSIZE(result, CUBE_SIZE(DIM(a)));
+	result->dim = DIM(a);
+
 	for (i = 0; i < DIM(b); i++)
 	{
-		result->x[i] = Min(LL_COORD(b,i), UR_COORD(b,i));
-		result->x[i + DIM(a)] = Max(LL_COORD(b,i), UR_COORD(b,i));
+		result->x[i] = Max(
+			Min(LL_COORD(a,i), UR_COORD(a,i)),
+			Min(LL_COORD(b,i), UR_COORD(b,i))
+		);
+		result->x[i + DIM(a)] = Min(
+			Max(LL_COORD(a,i), UR_COORD(a,i)),
+			Max(LL_COORD(b,i), UR_COORD(b,i))
+		);
+		// if (!((Min(LL_COORD(a,i), UR_COORD(a,i)) <= Max(LL_COORD(b,i), UR_COORD(b,i))) &&
+		// 	(Min(LL_COORD(b,i), UR_COORD(b,i)) <= Max(LL_COORD(a,i), UR_COORD(a,i)))))
+		// 	overlap = false;
+		if (result->x[i] != result->x[i + DIM(a)])
+			point_result = false;
 	}
 	for (i = DIM(b); i < DIM(a); i++)
 	{
-		result->x[i] = 0;
-		result->x[i + DIM(a)] = 0;
+		result->x[i] = Max(0,
+			Min(LL_COORD(a,i), UR_COORD(a,i))
+		);
+		result->x[i + DIM(a)] = Min(0,
+			Max(LL_COORD(a,i), UR_COORD(a,i))
+		);
+		// if (!((Min(LL_COORD(a,i), UR_COORD(a,i)) <= 0) &&
+		// 	(0 <= Max(LL_COORD(a,i), UR_COORD(a,i)))))
+		// 	overlap = false;
+		if (result->x[i] != result->x[i + DIM(a)])
+			point_result = false;
 	}
 
-	/* compute the intersection */
-	for (i = 0; i < DIM(a); i++)
+	// if (!overlap)
+	// {
+	// 	result = repalloc(result, POINT_SIZE(DIM(a)));
+	// 	SET_VARSIZE(result, POINT_SIZE(DIM(a)));
+	// 	SET_POINT_BIT(result);
+	// 	for (i = 0; i < DIM(result); i++)
+	// 		result->x[i] = 0;
+	// }
+	// else
+	if (point_result)
 	{
-		result->x[i] = Max(Min(LL_COORD(a,i), UR_COORD(a,i)), LL_COORD(result,i));
-		result->x[i + DIM(a)] = Min(Max(LL_COORD(a,i), UR_COORD(a,i)), UR_COORD(result,i));
+		result = repalloc(result, POINT_SIZE(DIM(a)));
+		SET_VARSIZE(result, POINT_SIZE(DIM(a)));
+		SET_POINT_BIT(result);
 	}
 
 	if (swapped)
@@ -972,11 +982,6 @@ cube_inter(PG_FUNCTION_ARGS)
 		PG_FREE_IF_COPY(a, 0);
 		PG_FREE_IF_COPY(b, 1);
 	}
-
-	#ifdef TRACE
-	fprintf(stderr, "= %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
-		result->dim, VARSIZE(result), LL_COORD(result, 0), LL_COORD(result, 1), LL_COORD(result, 2), UR_COORD(result, 0), UR_COORD(result, 1), UR_COORD(result, 2));
-	#endif
 
 	/*
 	 * Is it OK to return a non-null intersection for non-overlapping boxes?
