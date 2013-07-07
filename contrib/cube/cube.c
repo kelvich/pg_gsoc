@@ -1439,22 +1439,11 @@ distance_1D(double a1, double a2, double b1, double b2)
 Datum
 cube_is_point(PG_FUNCTION_ARGS)
 {
-	NDBOX	   *a = PG_GETARG_NDBOX(0);
-	int			i,
-				j;
-
-	#ifdef TRACE
-	fprintf(stderr, "cube_is_point\n");
-	#endif
-
-	for (i = 0, j = a->dim; i < a->dim; i++, j++)
-	{
-		if (a->x[i] != a->x[j])
-			PG_RETURN_BOOL(FALSE);
-	}
-
-	PG_FREE_IF_COPY(a, 0);
-	PG_RETURN_BOOL(TRUE);
+	NDBOX		*cube = PG_GETARG_NDBOX(0);
+	if (IS_POINT(cube))
+		PG_RETURN_BOOL(TRUE);
+	else
+		PG_RETURN_BOOL(FALSE);
 }
 
 /* Return dimensions in use in the data structure */
@@ -1462,7 +1451,7 @@ Datum
 cube_dim(PG_FUNCTION_ARGS)
 {
 	NDBOX	   *c = PG_GETARG_NDBOX(0);
-	int			dim = c->dim;
+	int			dim = DIM(c);
 
 	PG_FREE_IF_COPY(c, 0);
 	PG_RETURN_INT32(dim);
@@ -1521,8 +1510,7 @@ cube_enlarge(PG_FUNCTION_ARGS)
 	int			dim = 0;
 	int			size;
 	int			i,
-				j,
-				k;
+				j;
 
 	fprintf(stderr, "cube_enlarge\n");
 
@@ -1530,23 +1518,25 @@ cube_enlarge(PG_FUNCTION_ARGS)
 		n = CUBE_MAX_DIM;
 	if (r > 0 && n > 0)
 		dim = n;
-	if (a->dim > dim)
-		dim = a->dim;
-	size = offsetof(NDBOX, x[0]) +sizeof(double) * dim * 2;
+	if (DIM(a) > dim)
+		dim = DIM(a);
+
+	size = CUBE_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = dim;
-	for (i = 0, j = dim, k = a->dim; i < a->dim; i++, j++, k++)
+	
+	for (i = 0, j = dim; i < DIM(a); i++, j++)
 	{
-		if (a->x[i] >= a->x[k])
+		if (LL_COORD(a,i) >= UR_COORD(a,i))
 		{
-			result->x[i] = a->x[k] - r;
-			result->x[j] = a->x[i] + r;
+			result->x[i] = UR_COORD(a,i) - r;
+			result->x[j] = LL_COORD(a,i) + r;
 		}
 		else
 		{
-			result->x[i] = a->x[i] - r;
-			result->x[j] = a->x[k] + r;
+			result->x[i] = LL_COORD(a,i) - r;
+			result->x[j] = UR_COORD(a,i) + r;
 		}
 		if (result->x[i] > result->x[j])
 		{
