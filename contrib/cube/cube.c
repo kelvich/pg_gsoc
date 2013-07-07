@@ -1479,8 +1479,8 @@ cube_ll_coord(PG_FUNCTION_ARGS)
 	fprintf(stderr, "cube_ll_coord\n");
 	#endif
 
-	if (c->dim >= n && n > 0)
-		result = Min(c->x[n - 1], c->x[c->dim + n - 1]);
+	if (DIM(c) >= n && n > 0)
+		result = Min(LL_COORD(c, n-1), UR_COORD(c, n-1));
 	else
 		result = 0;
 
@@ -1500,8 +1500,8 @@ cube_ur_coord(PG_FUNCTION_ARGS)
 	fprintf(stderr, "cube_ur_coord\n");
 	#endif
 
-	if (c->dim >= n && n > 0)
-		result = Max(c->x[n - 1], c->x[c->dim + n - 1]);
+	if (DIM(c) >= n && n > 0)
+		result = Max(LL_COORD(c, n-1), UR_COORD(c, n-1));
 	else
 		result = 0;
 
