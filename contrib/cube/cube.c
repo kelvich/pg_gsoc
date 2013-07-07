@@ -251,10 +251,10 @@ cube_a_f8(PG_FUNCTION_ARGS)
 
 	dur = ARRPTR(ur);
 
-	size = offsetof(NDBOX, x[0]) + sizeof(double) * dim;
+	size = POINT_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
-	result->dim = dim + 0x80000000;
+	SET_POINT_BIT(result);
 
 	#ifdef TRACE
 	fprintf(stderr, "cube_a_f8: cube size, %lu\n", offsetof(NDBOX, x[0]) + sizeof(double) * 2 * dim );
@@ -263,10 +263,7 @@ cube_a_f8(PG_FUNCTION_ARGS)
 	#endif
 
 	for (i = 0; i < dim; i++)
-	{
-    result->x[i] = dur[i];
-    // result->x[i + dim] = dur[i];
-	}
+		result->x[i] = dur[i];
 
 	#ifdef TRACE
 	fprintf(stderr, "cube_a_f8: point check: %i\n", IS_POINT(result));
@@ -821,8 +818,12 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 	#endif
 
 	// let's try to guess result for same cubes
-	if (a == b)
-		return (a);
+	if (a == b){
+		// result = palloc0(VARSIZE(a));
+		// memcpy(result, a, VARSIZE(a));
+		// return result;
+		return a;
+	}
 
 	if (DIM(a) >= DIM(b))
 	{

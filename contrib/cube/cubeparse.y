@@ -175,7 +175,8 @@ write_box(unsigned int dim, char *str1, char *str2)
 	NDBOX	   *bp;
 	char	   *s;
 	int			i;
-	int			size = offsetof(NDBOX, x[0]) + sizeof(double) * dim * 2;
+	int			size = CUBE_SIZE(dim);
+	bool		point = true;
 
 	bp = palloc0(size);
 	SET_VARSIZE(bp, size);
@@ -195,6 +196,18 @@ write_box(unsigned int dim, char *str1, char *str2)
 	{
 		s++; i++;
 		bp->x[i] = strtod(s, NULL);
+		if (bp->x[i] != bp->x[i-dim])
+			point = false;
+	}
+
+	if (bp->x[0] != bp->x[dim])
+		point = false;
+	if (point)
+	{
+		size = POINT_SIZE(dim);
+		bp = repalloc(bp, size);
+		SET_VARSIZE(bp, size);
+		SET_POINT_BIT(bp);
 	}
 
 	return(bp);
