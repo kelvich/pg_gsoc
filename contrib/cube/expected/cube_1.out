@@ -470,10 +470,18 @@ SELECT cube('{0,1,2}'::float[]);
 SELECT cube_subset(cube('(1,3,5),(6,7,8)'), ARRAY[3,2,1,1]);
         cube_subset        
 ---------------------------
+ (5, 3, 1, 1),(8, 7, 6, 6)
+(1 row)
+
+SELECT cube_subset(cube('(1,3,5),(1,3,5)'), ARRAY[3,2,1,1]);
+ cube_subset  
+--------------
  (5, 3, 1, 1)
 (1 row)
 
 SELECT cube_subset(cube('(1,3,5),(6,7,8)'), ARRAY[4,0]);
+ERROR:  Index out of bounds
+SELECT cube_subset(cube('(6,7,8),(6,7,8)'), ARRAY[4,0]);
 ERROR:  Index out of bounds
 --
 -- Test point processing

@@ -306,14 +306,16 @@ cube_subset(PG_FUNCTION_ARGS)
 	dx = (int32 *) ARR_DATA_PTR(idx);
 
 	dim = ARRNELEMS(idx);
-	size = offsetof(NDBOX, x[0]) +sizeof(double) * 2 * dim;
+	size = IS_POINT(c) ? POINT_SIZE(dim) : CUBE_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = dim;
+	if (IS_POINT(c))
+		SET_POINT_BIT(result);
 
 	for (i = 0; i < dim; i++)
 	{
-		if ((dx[i] <= 0) || (dx[i] > c->dim))
+		if ((dx[i] <= 0) || (dx[i] > DIM(c)))
 		{
 			pfree(result);
 			ereport(ERROR,
@@ -321,7 +323,8 @@ cube_subset(PG_FUNCTION_ARGS)
 					 errmsg("Index out of bounds")));
 		}
 		result->x[i] = c->x[dx[i] - 1];
-		result->x[i + dim] = c->x[dx[i] + c->dim - 1];
+		if (!IS_POINT(c))
+			result->x[i + dim] = c->x[dx[i] + DIM(c) - 1];
 	}
 
 	PG_FREE_IF_COPY(c, 0);
