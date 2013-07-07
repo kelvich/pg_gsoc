@@ -190,6 +190,7 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 	int			i;
 	int			dim;
 	int			size;
+	bool		point = true;
 	double	   *dur,
 			   *dll;
 
@@ -211,7 +212,7 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 	dur = ARRPTR(ur);
 	dll = ARRPTR(ll);
 
-	size = offsetof(NDBOX, x[0]) +sizeof(double) * 2 * dim;
+	size = CUBE_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = dim;
@@ -220,6 +221,16 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 	{
 		result->x[i] = dur[i];
 		result->x[i + dim] = dll[i];
+		if (dur[i] != dll[i])
+			point = false;
+	}
+
+	if (point)
+	{
+		size = POINT_SIZE(dim);
+		result = repalloc(result, size);
+		SET_VARSIZE(result, size);
+		SET_POINT_BIT(result);
 	}
 
 	PG_RETURN_NDBOX(result);
@@ -786,9 +797,9 @@ cube_sort_by_v0(NDBOX *cube, int d)
 	if (DIM(cube) <= d)
 		return 0.0;
 	if (is_min)
-		return LL_COORD(cube,d);
+		return LL_COORD(cube,d); // add min/max
 	else
-		return 1.0 / UR_COORD(cube,d);
+		return 1.0 / UR_COORD(cube,d); // add min/max
 }
 
 NDBOX *
@@ -1449,7 +1460,6 @@ cube_dim(PG_FUNCTION_ARGS)
 {
 	NDBOX	   *c = PG_GETARG_NDBOX(0);
 	int			dim = DIM(c);
-
 	PG_FREE_IF_COPY(c, 0);
 	PG_RETURN_INT32(dim);
 }
@@ -1575,7 +1585,9 @@ cube_f8(PG_FUNCTION_ARGS)
 	NDBOX	   *result;
 	int			size;
 
+	#ifdef TRACE
 	fprintf(stderr, "cube_f8\n");
+	#endif
 
 	size = POINT_SIZE(1);
 	result = (NDBOX *) palloc0(size);
@@ -1594,17 +1606,31 @@ cube_f8_f8(PG_FUNCTION_ARGS)
 {
 	double		x0 = PG_GETARG_FLOAT8(0);
 	double		x1 = PG_GETARG_FLOAT8(1);
-	NDBOX	   *result;
+	NDBOX		*result;
 	int			size;
 
+	#ifdef TRACE
 	fprintf(stderr, "cube_f8_f8\n");
+	#endif
 
-	size = offsetof(NDBOX, x[0]) +sizeof(double) * 2;
-	result = (NDBOX *) palloc0(size);
-	SET_VARSIZE(result, size);
-	result->dim = 1;
-	result->x[0] = x0;
-	result->x[1] = x1;
+	if (x0 == x1)
+	{
+		size = POINT_SIZE(1);
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		result->dim = 1;
+		SET_POINT_BIT(result);
+		result->x[0] = x0;
+	}
+	else
+	{
+		size = CUBE_SIZE(1);
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		result->dim = 1;
+		result->x[0] = x0;
+		result->x[1] = x1;
+	}
 
 	PG_RETURN_NDBOX(result);
 }
@@ -1614,27 +1640,43 @@ cube_f8_f8(PG_FUNCTION_ARGS)
 Datum
 cube_c_f8(PG_FUNCTION_ARGS)
 {
-	NDBOX	   *c = PG_GETARG_NDBOX(0);
+	NDBOX		*cube = PG_GETARG_NDBOX(0);
 	double		x = PG_GETARG_FLOAT8(1);
-	NDBOX	   *result;
+	NDBOX		*result;
 	int			size;
 	int			i;
 
+	#ifdef TRACE
 	fprintf(stderr, "cube_c_f8\n");
+	#endif
 
-	size = offsetof(NDBOX, x[0]) +sizeof(double) * (c->dim + 1) *2;
-	result = (NDBOX *) palloc0(size);
-	SET_VARSIZE(result, size);
-	result->dim = c->dim + 1;
-	for (i = 0; i < c->dim; i++)
+	if (IS_POINT(cube))
 	{
-		result->x[i] = c->x[i];
-		result->x[result->dim + i] = c->x[c->dim + i];
+		size = POINT_SIZE((DIM(cube) + 1));
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		result->dim = DIM(cube) + 1;
+		SET_POINT_BIT(result);
+		for (i = 0; i < DIM(cube); i++)
+			result->x[i] = cube->x[i];
+		result->x[DIM(result) - 1] = x;
 	}
-	result->x[result->dim - 1] = x;
-	result->x[2 * result->dim - 1] = x;
+	else
+	{
+		size = CUBE_SIZE((DIM(cube) + 1));
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		result->dim = DIM(cube) + 1;
+		for (i = 0; i < DIM(cube); i++)
+		{
+			result->x[i] = cube->x[i];
+			result->x[DIM(result) + i] = cube->x[DIM(cube) + i];
+		}
+		result->x[DIM(result) - 1] = x;
+		result->x[2*DIM(result) - 1] = x;
+	}
 
-	PG_FREE_IF_COPY(c, 0);
+	PG_FREE_IF_COPY(cube, 0);
 	PG_RETURN_NDBOX(result);
 }
 
@@ -1642,27 +1684,42 @@ cube_c_f8(PG_FUNCTION_ARGS)
 Datum
 cube_c_f8_f8(PG_FUNCTION_ARGS)
 {
-	NDBOX	   *c = PG_GETARG_NDBOX(0);
+	NDBOX	   *cube = PG_GETARG_NDBOX(0);
 	double		x1 = PG_GETARG_FLOAT8(1);
 	double		x2 = PG_GETARG_FLOAT8(2);
 	NDBOX	   *result;
 	int			size;
 	int			i;
 
+	#ifdef TRACE
 	fprintf(stderr, "cube_c_f8_f8\n");
+	#endif
 
-	size = offsetof(NDBOX, x[0]) +sizeof(double) * (c->dim + 1) *2;
-	result = (NDBOX *) palloc0(size);
-	SET_VARSIZE(result, size);
-	result->dim = c->dim + 1;
-	for (i = 0; i < c->dim; i++)
-	{
-		result->x[i] = c->x[i];
-		result->x[result->dim + i] = c->x[c->dim + i];
+	if (IS_POINT(cube) && (x1 == x2)){
+		size = POINT_SIZE((DIM(cube) + 1));
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		result->dim = DIM(cube) + 1;
+		SET_POINT_BIT(result);
+		for (i = 0; i < DIM(cube); i++)
+			result->x[i] = cube->x[i];
+		result->x[DIM(result) - 1] = x1;
 	}
-	result->x[result->dim - 1] = x1;
-	result->x[2 * result->dim - 1] = x2;
+	else
+	{
+		size = CUBE_SIZE((DIM(cube) + 1));
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		result->dim = DIM(cube) + 1;
+		for (i = 0; i < DIM(cube); i++)
+		{
+			result->x[i] = LL_COORD(cube, i);
+			result->x[DIM(result) + i] = UR_COORD(cube, i);
+		}
+		result->x[DIM(result) - 1] = x1;
+		result->x[2 * DIM(result) - 1] = x2;
+	}
 
-	PG_FREE_IF_COPY(c, 0);
+	PG_FREE_IF_COPY(cube, 0);
 	PG_RETURN_NDBOX(result);
 }

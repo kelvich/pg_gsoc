@@ -115,6 +115,21 @@ SELECT cube_subset(cube('(1,3,5),(6,7,8)'), ARRAY[3,2,1,1]);
 SELECT cube_subset(cube('(1,3,5),(6,7,8)'), ARRAY[4,0]);
 
 --
+-- Test point processing
+--
+SELECT cube('(1,2),(1,2)'); -- cube_in
+SELECT cube('{0,1,2}'::float[], '{0,1,2}'::float[]); -- cube_a_f8_f8
+SELECT cube('{5,6,7,8}'::float[]); -- cube_a_f8
+SELECT cube(1.37); -- cube_f8
+SELECT cube(1.37, 1.37); -- cube_f8_f8
+SELECT cube(cube(1,1), 42); -- cube_c_f8
+SELECT cube(cube(1,2), 42); -- cube_c_f8
+SELECT cube(cube(1,1), 42, 42); -- cube_c_f8_f8
+SELECT cube(cube(1,1), 42, 24); -- cube_c_f8_f8
+SELECT cube(cube(1,2), 42, 42); -- cube_c_f8_f8
+SELECT cube(cube(1,2), 42, 24); -- cube_c_f8_f8
+
+--
 -- Testing limit of CUBE_MAX_DIM dimensions check in cube_in.
 --
 
