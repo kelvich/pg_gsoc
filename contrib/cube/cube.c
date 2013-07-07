@@ -822,79 +822,64 @@ NDBOX *
 cube_union_v0(NDBOX *a, NDBOX *b)
 {
 	int			i;
+	bool		point_result = true;
 	NDBOX	   *result;
 
 	#ifdef TRACE
 	fprintf(stderr, "cube_union_v0\n");
 	#endif
 
-	// let's try to guess result for same cubes
-	if (a == b){
-		// result = palloc0(VARSIZE(a));
-		// memcpy(result, a, VARSIZE(a));
-		// return result;
+	/* let's try to guess result for same pointers */
+	if (a == b)
 		return a;
-	}
 
-	if (DIM(a) >= DIM(b))
-	{
-		result = palloc0(CUBE_SIZE(DIM(a)));
-		SET_VARSIZE(result, CUBE_SIZE(DIM(a)));
-		result->dim = DIM(a);
-	}
-	else
-	{
-		result = palloc0(CUBE_SIZE(DIM(b)));
-		SET_VARSIZE(result, CUBE_SIZE(DIM(b)));
-		result->dim = DIM(b);
-	}
+	/* point result may happen only if arguments is points */
+	if (!IS_POINT(a) || !IS_POINT(b))
+		point_result = false;
 
 	/* swap the box pointers if needed */
 	if (DIM(a) < DIM(b))
 	{
 		NDBOX	   *tmp = b;
-
 		b = a;
 		a = tmp;
 	}
 
-	/*
-	 * use the potentially smaller of the two boxes (b) to fill in the result,
-	 * padding absent dimensions with zeroes
-	 */
+	result = palloc0(CUBE_SIZE(DIM(a)));
+	SET_VARSIZE(result, CUBE_SIZE(DIM(a)));
+	result->dim = DIM(a);
+
+	 /* compute the union */
 	for (i = 0; i < DIM(b); i++)
 	{
-		result->x[i] = Min(LL_COORD(b,i), UR_COORD(b,i));
-		result->x[i + DIM(a)] = Max(LL_COORD(b,i), UR_COORD(b,i));
+		result->x[i] = Min(
+			Min(LL_COORD(a,i), UR_COORD(a,i)),
+			Min(LL_COORD(b,i), UR_COORD(b,i))
+		);
+		result->x[i + DIM(a)] = Max(
+			Max(LL_COORD(a,i), UR_COORD(a,i)), 
+			Max(LL_COORD(b,i), UR_COORD(b,i))
+		);
+		if (result->x[i] != result->x[i + DIM(a)])
+			point_result = false;
 	}
 	for (i = DIM(b); i < DIM(a); i++)
 	{
-		result->x[i] = 0;
-		result->x[i + DIM(a)] = 0;
+		result->x[i] = Min(0,
+			Min(LL_COORD(a,i), UR_COORD(a,i))
+		);
+		result->x[i + DIM(a)] = Max(0,
+			Max(LL_COORD(a,i), UR_COORD(a,i))
+		);
+		if (result->x[i] != result->x[i + DIM(a)])
+			point_result = false;
 	}
 
-	/* compute the union */
-	for (i = 0; i < DIM(a); i++)
+	if (point_result)
 	{
-		result->x[i] =
-			Min(Min(LL_COORD(a,i), UR_COORD(a,i)), LL_COORD(result,i));
-		result->x[i + DIM(a)] =
-      Max(Max(LL_COORD(a,i), UR_COORD(a,i)), UR_COORD(result,i));
-	}
-
-	// detect points on out (3D case)
-	// better to 
-	if ((LL_COORD(result, 0) == UR_COORD(result, 0)) &&
-		(LL_COORD(result, 1) == UR_COORD(result, 1)) &&
-		(LL_COORD(result, 2) == UR_COORD(result, 2)))
-	{
-		fprintf(stderr, "a = %p, b = %p", a, b);
-		fprintf(stderr, "cube_union_v0  %id, %ib (%f, %f, %f, %f, %f, %f)", 
-		  a->dim, VARSIZE(a), LL_COORD(a, 0), LL_COORD(a, 1), LL_COORD(a, 2), UR_COORD(a, 0), UR_COORD(a, 1), UR_COORD(a, 2));
-		fprintf(stderr, " vs  %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
-		  b->dim, VARSIZE(b), LL_COORD(b, 0), LL_COORD(b, 1), LL_COORD(b, 2), UR_COORD(b, 0), UR_COORD(b, 1), UR_COORD(b, 2));
-		fprintf(stderr, "= %id, %ib (%f, %f, %f, %f, %f, %f)\n", 
-		  result->dim, VARSIZE(result), LL_COORD(result, 0), LL_COORD(result, 1), LL_COORD(result, 2), UR_COORD(result, 0), UR_COORD(result, 1), UR_COORD(result, 2));
+		result = repalloc(result, POINT_SIZE(DIM(a)));
+		SET_VARSIZE(result, POINT_SIZE(DIM(a)));
+		SET_POINT_BIT(result);
 	}
 
 	return (result);

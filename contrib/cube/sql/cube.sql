@@ -302,6 +302,14 @@ SELECT cube_enlarge('(2,-2),(-3,7)'::cube, -3, 2);
 SELECT cube_enlarge('(42,-23,-23),(42,23,23)'::cube, -23, 5);
 SELECT cube_enlarge('(42,-23,-23),(42,23,23)'::cube, -24, 5);
 
+-- Test of cube_union (MBR for two cubes)
+--
+SELECT cube_union('(1,2),(3,4)'::cube, '(5,6,7),(8,9,10)'::cube);
+SELECT cube_union('(1,2)'::cube, '(4,2,0,0)'::cube);
+SELECT cube_union('(1,2),(1,2)'::cube, '(4,2),(4,2)'::cube);
+SELECT cube_union('(1,2),(1,2)'::cube, '(1,2),(1,2)'::cube);
+SELECT cube_union('(1,2),(1,2)'::cube, '(1,2,0),(1,2,0)'::cube);
+
 -- Load some example data and build the index
 --
 CREATE TABLE test_cube (c cube);
