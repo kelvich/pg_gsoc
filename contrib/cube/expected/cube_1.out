@@ -1100,6 +1100,18 @@ SELECT cube_enlarge('(2,-2),(-3,7)'::cube, -3, 2);
  (-0.5, 1),(-0.5, 4)
 (1 row)
 
+SELECT cube_enlarge('(42,-23,-23),(42,23,23)'::cube, -23, 5);
+ cube_enlarge 
+--------------
+ (42, 0, 0)
+(1 row)
+
+SELECT cube_enlarge('(42,-23,-23),(42,23,23)'::cube, -24, 5);
+ cube_enlarge 
+--------------
+ (42, 0, 0)
+(1 row)
+
 -- Load some example data and build the index
 --
 CREATE TABLE test_cube (c cube);

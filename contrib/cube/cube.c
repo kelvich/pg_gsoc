@@ -330,7 +330,6 @@ cube_out(PG_FUNCTION_ARGS)
 	NDBOX	   *cube = PG_GETARG_NDBOX(0);
 	StringInfoData buf;
 	int			dim = DIM(cube);
-	bool		equal = true;
 	int			i;
 	int			ndig;
 
@@ -357,12 +356,10 @@ cube_out(PG_FUNCTION_ARGS)
 		if (i > 0)
 			appendStringInfo(&buf, ", ");
 		appendStringInfo(&buf, "%.*g", ndig, LL_COORD(cube,i));
-		if (LL_COORD(cube, i) != UR_COORD(cube, i))
-			equal = false;
 	}
 	appendStringInfoChar(&buf, ')');
 
-	if (!equal)
+	if (!IS_POINT(cube))
 	{
 		appendStringInfo(&buf, ",(");
 		for (i = 0; i < dim; i++)
@@ -1510,9 +1507,11 @@ cube_enlarge(PG_FUNCTION_ARGS)
 	int			dim = 0;
 	int			size;
 	int			i,
-				j;
-
+				j,
+				shrunk_coordinates = 0;
+	#ifdef TRACE
 	fprintf(stderr, "cube_enlarge\n");
+	#endif
 
 	if (n > CUBE_MAX_DIM)
 		n = CUBE_MAX_DIM;
@@ -1542,13 +1541,26 @@ cube_enlarge(PG_FUNCTION_ARGS)
 		{
 			result->x[i] = (result->x[i] + result->x[j]) / 2;
 			result->x[j] = result->x[i];
+			shrunk_coordinates++;
 		}
+		else if (result->x[i] == result->x[j])
+			shrunk_coordinates++;
 	}
 	/* dim > a->dim only if r > 0 */
 	for (; i < dim; i++, j++)
 	{
 		result->x[i] = -r;
 		result->x[j] = r;
+	}
+
+	/* Point can arise in two cases:
+	   1) When argument is point and r == 0
+	   2) When all coordinates was set to their averages */
+	if ( (IS_POINT(a) && r == 0) || (shrunk_coordinates == dim) ){
+		size = POINT_SIZE(dim);
+		result = (NDBOX *) repalloc(result, size);
+		SET_VARSIZE(result, size);
+		SET_POINT_BIT(result);
 	}
 
 	PG_FREE_IF_COPY(a, 0);
@@ -1565,11 +1577,13 @@ cube_f8(PG_FUNCTION_ARGS)
 
 	fprintf(stderr, "cube_f8\n");
 
-	size = offsetof(NDBOX, x[0]) +sizeof(double) * 2;
+	size = POINT_SIZE(1);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = 1;
-	result->x[0] = result->x[1] = x;
+	SET_POINT_BIT(result);
+
+	result->x[0] = x;
 
 	PG_RETURN_NDBOX(result);
 }

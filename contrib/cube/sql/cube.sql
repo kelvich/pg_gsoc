@@ -265,6 +265,8 @@ SELECT cube_enlarge('(2,-2),(-3,7)'::cube, 1, 2);
 SELECT cube_enlarge('(2,-2),(-3,7)'::cube, 3, 2);
 SELECT cube_enlarge('(2,-2),(-3,7)'::cube, -1, 2);
 SELECT cube_enlarge('(2,-2),(-3,7)'::cube, -3, 2);
+SELECT cube_enlarge('(42,-23,-23),(42,23,23)'::cube, -23, 5);
+SELECT cube_enlarge('(42,-23,-23),(42,23,23)'::cube, -24, 5);
 
 -- Load some example data and build the index
 --
