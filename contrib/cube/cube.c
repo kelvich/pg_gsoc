@@ -833,10 +833,6 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 	if (a == b)
 		return a;
 
-	/* point result may happen only if arguments is points */
-	if (!IS_POINT(a) || !IS_POINT(b))
-		point_result = false;
-
 	/* swap the box pointers if needed */
 	if (DIM(a) < DIM(b))
 	{
