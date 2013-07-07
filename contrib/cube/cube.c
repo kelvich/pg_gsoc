@@ -248,18 +248,18 @@ cube_a_f8(PG_FUNCTION_ARGS)
 				 errmsg("cannot work with arrays containing NULLs")));
 
 	dim = ARRNELEMS(ur);
-
 	dur = ARRPTR(ur);
 
 	size = POINT_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
+	result->dim = dim;
 	SET_POINT_BIT(result);
 
 	#ifdef TRACE
 	fprintf(stderr, "cube_a_f8: cube size, %lu\n", offsetof(NDBOX, x[0]) + sizeof(double) * 2 * dim );
 	fprintf(stderr, "cube_a_f8: point size, %lu\n", offsetof(NDBOX, x[0]) + sizeof(double) * dim );
-	fprintf(stderr, "cube_a_f8: point dim, %u\n", result->dim );
+	fprintf(stderr, "cube_a_f8: point dim, %u / %u \n", result->dim, DIM(result) );
 	#endif
 
 	for (i = 0; i < dim; i++)
