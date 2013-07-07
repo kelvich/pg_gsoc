@@ -1382,7 +1382,7 @@ cube_distance(PG_FUNCTION_ARGS)
 	#endif
 
 	/* swap the box pointers if needed */
-	if (a->dim < b->dim)
+	if (DIM(a) < DIM(b))
 	{
 		NDBOX	   *tmp = b;
 
@@ -1393,16 +1393,16 @@ cube_distance(PG_FUNCTION_ARGS)
 
 	distance = 0.0;
 	/* compute within the dimensions of (b) */
-	for (i = 0; i < b->dim; i++)
+	for (i = 0; i < DIM(b); i++)
 	{
-		d = distance_1D(a->x[i], a->x[i + a->dim], b->x[i], b->x[i + b->dim]);
+		d = distance_1D(LL_COORD(a,i), UR_COORD(a,i), LL_COORD(b,i), UR_COORD(b,i));
 		distance += d * d;
 	}
 
 	/* compute distance to zero for those dimensions in (a) absent in (b) */
-	for (i = b->dim; i < a->dim; i++)
+	for (i = DIM(b); i < DIM(a); i++)
 	{
-		d = distance_1D(a->x[i], a->x[i + a->dim], 0.0, 0.0);
+		d = distance_1D(LL_COORD(a,i), UR_COORD(a,i), 0.0, 0.0);
 		distance += d * d;
 	}
 
