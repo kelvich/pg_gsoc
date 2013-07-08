@@ -325,37 +325,6 @@ SELECT cube_inter('(1,2,3)'::cube, '(5,6,3)'::cube); -- point args
 SELECT cube_size('(4,8),(15,16)'::cube);
 SELECT cube_size('(42,137)'::cube);
 
--- Test of cube_cmp
---
-SELECT cube_cmp('(1,2),(3,4)'::cube, '(1.5,2.5), (3,4)'::cube);
-SELECT cube_cmp('(1,2),(3,4)'::cube, '(1,2), (3,4)'::cube);
-SELECT cube_cmp('(1.6,2),(3,4)'::cube, '(1.5,2.5), (3,4)'::cube);
-SELECT cube_cmp('(1,2,0),(3,4,0)'::cube, '(1,2), (3,4)'::cube);
-SELECT cube_cmp('(1,2)'::cube, '(1,2)'::cube);
-SELECT cube_cmp('(1,2)'::cube, '(3,4)'::cube);
-SELECT cube_cmp('(3,4)'::cube, '(1,2)'::cube);
-
--- Test of cube_contains
---
-SELECT cube_contains('(1,2),(11,12)'::cube, '(3,4),(5,6)'::cube);
-SELECT cube_contains('(1,2),(11,12)'::cube, '(3,4),(11,12)'::cube);
-SELECT cube_contains('(1,2),(11,12)'::cube, '(3,4),(12,13)'::cube);
-SELECT cube_contains('(1,2),(11,12)'::cube, '(3,4)'::cube);
-SELECT cube_contains('(3,4)'::cube, '(3,4)'::cube);
-SELECT cube_contains('(1,2)'::cube, '(3,4)'::cube);
-
--- Test of cube_overlap
---
-SELECT cube_overlap('(1,2),(11,12)'::cube, '(3,4),(5,6)'::cube);
-SELECT cube_overlap('(1,2),(11,12)'::cube, '(3,4),(15,16)'::cube);
-SELECT cube_overlap('(1,2),(11,12)'::cube, '(11,12),(15,16)'::cube);
-SELECT cube_overlap('(1,2),(11,12)'::cube, '(11,12.1),(15,16)'::cube);
-SELECT cube_overlap('(1,2),(11,12)'::cube, '(11,12.1),(15,16)'::cube);
-SELECT cube_overlap('(1,2),(11,12)'::cube, '(4,5)'::cube);
-SELECT cube_overlap('(1,2),(11,12)'::cube, '(14,15)'::cube);
-SELECT cube_overlap('(1,2)'::cube, '(4,5)'::cube);
-SELECT cube_overlap('(1,2)'::cube, '(1,2)'::cube);
-
 -- Load some example data and build the index
 --
 CREATE TABLE test_cube (c cube);
