@@ -207,7 +207,7 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 	size = CUBE_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
-	result->dim = dim;
+	SET_DIM(result, dim);
 
 	for (i = 0; i < dim; i++)
 	{
@@ -253,7 +253,7 @@ cube_a_f8(PG_FUNCTION_ARGS)
 	size = POINT_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
-	result->dim = dim;
+	SET_DIM(result, dim);
 	SET_POINT_BIT(result);
 
 	for (i = 0; i < dim; i++)
@@ -285,7 +285,8 @@ cube_subset(PG_FUNCTION_ARGS)
 	size = IS_POINT(c) ? POINT_SIZE(dim) : CUBE_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
-	result->dim = dim;
+	SET_DIM(result, dim);
+
 	if (IS_POINT(c))
 		SET_POINT_BIT(result);
 
@@ -775,7 +776,7 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 
 	result = palloc0(CUBE_SIZE(DIM(a)));
 	SET_VARSIZE(result, CUBE_SIZE(DIM(a)));
-	result->dim = DIM(a);
+	SET_DIM(result, DIM(a));
 
 	 /* compute the union */
 	for (i = 0; i < DIM(b); i++)
@@ -852,7 +853,7 @@ cube_inter(PG_FUNCTION_ARGS)
 
 	result = (NDBOX *) palloc0(CUBE_SIZE(DIM(a)));
 	SET_VARSIZE(result, CUBE_SIZE(DIM(a)));
-	result->dim = DIM(a);
+	SET_DIM(result, DIM(a));
 
 	for (i = 0; i < DIM(b); i++)
 	{
@@ -1413,7 +1414,7 @@ cube_enlarge(PG_FUNCTION_ARGS)
 	size = CUBE_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
-	result->dim = dim;
+	SET_DIM(result, dim);
 	
 	for (i = 0, j = dim; i < DIM(a); i++, j++)
 	{
@@ -1469,7 +1470,7 @@ cube_f8(PG_FUNCTION_ARGS)
 	size = POINT_SIZE(1);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
-	result->dim = 1;
+	SET_DIM(result, 1);
 	SET_POINT_BIT(result);
 
 	result->x[0] = x;
@@ -1492,7 +1493,7 @@ cube_f8_f8(PG_FUNCTION_ARGS)
 		size = POINT_SIZE(1);
 		result = (NDBOX *) palloc0(size);
 		SET_VARSIZE(result, size);
-		result->dim = 1;
+		SET_DIM(result, 1);
 		SET_POINT_BIT(result);
 		result->x[0] = x0;
 	}
@@ -1501,7 +1502,7 @@ cube_f8_f8(PG_FUNCTION_ARGS)
 		size = CUBE_SIZE(1);
 		result = (NDBOX *) palloc0(size);
 		SET_VARSIZE(result, size);
-		result->dim = 1;
+		SET_DIM(result, 1);
 		result->x[0] = x0;
 		result->x[1] = x1;
 	}
@@ -1526,7 +1527,7 @@ cube_c_f8(PG_FUNCTION_ARGS)
 		size = POINT_SIZE((DIM(cube) + 1));
 		result = (NDBOX *) palloc0(size);
 		SET_VARSIZE(result, size);
-		result->dim = DIM(cube) + 1;
+		SET_DIM(result, DIM(cube) + 1);
 		SET_POINT_BIT(result);
 		for (i = 0; i < DIM(cube); i++)
 			result->x[i] = cube->x[i];
@@ -1537,7 +1538,7 @@ cube_c_f8(PG_FUNCTION_ARGS)
 		size = CUBE_SIZE((DIM(cube) + 1));
 		result = (NDBOX *) palloc0(size);
 		SET_VARSIZE(result, size);
-		result->dim = DIM(cube) + 1;
+		SET_DIM(result, DIM(cube) + 1);
 		for (i = 0; i < DIM(cube); i++)
 		{
 			result->x[i] = cube->x[i];
@@ -1567,7 +1568,7 @@ cube_c_f8_f8(PG_FUNCTION_ARGS)
 		size = POINT_SIZE((DIM(cube) + 1));
 		result = (NDBOX *) palloc0(size);
 		SET_VARSIZE(result, size);
-		result->dim = DIM(cube) + 1;
+		SET_DIM(result, DIM(cube) + 1);
 		SET_POINT_BIT(result);
 		for (i = 0; i < DIM(cube); i++)
 			result->x[i] = cube->x[i];
@@ -1578,7 +1579,7 @@ cube_c_f8_f8(PG_FUNCTION_ARGS)
 		size = CUBE_SIZE((DIM(cube) + 1));
 		result = (NDBOX *) palloc0(size);
 		SET_VARSIZE(result, size);
-		result->dim = DIM(cube) + 1;
+		SET_DIM(result, DIM(cube) + 1);
 		for (i = 0; i < DIM(cube); i++)
 		{
 			result->x[i] = LL_COORD(cube, i);
