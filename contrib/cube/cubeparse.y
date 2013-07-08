@@ -180,7 +180,7 @@ write_box(unsigned int dim, char *str1, char *str2)
 
 	bp = palloc0(size);
 	SET_VARSIZE(bp, size);
-	bp->dim = dim;
+	SET_DIM(bp, dim);
 
 	s = str1;
 	bp->x[i=0] = strtod(s, NULL);
@@ -225,7 +225,7 @@ write_point_as_box(char *str, int dim)
 	size = POINT_SIZE(dim);
 	bp = palloc0(size);
 	SET_VARSIZE(bp, size);
-	bp->dim = dim;
+	SET_DIM(bp, dim);
 	SET_POINT_BIT(bp);
 
 	i = 0;

@@ -6,7 +6,7 @@ typedef struct NDBOX
 {
 	/* varlena header (do not touch directly!) */
 	int32 vl_len_;
-	
+
 	/* 
 	** Header contains info about NDBOX. For binary
 	** compatibility with old versions it is defined
@@ -36,4 +36,4 @@ typedef struct NDBOX
 #define UR_COORD(cube, i) ( IS_POINT(cube) ? cube->x[i] : cube->x[i + DIM(cube)] )
 
 #define POINT_SIZE(_dim) (offsetof(NDBOX, x[0]) + sizeof(double)*_dim)
-#define CUBE_SIZE (_dim) (offsetof(NDBOX, x[0]) + sizeof(double)*_dim*2)
+#define CUBE_SIZE(_dim) (offsetof(NDBOX, x[0]) + sizeof(double)*_dim*2)
