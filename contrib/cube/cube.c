@@ -995,16 +995,15 @@ cube_size(PG_FUNCTION_ARGS)
 {
 	NDBOX	   *a = PG_GETARG_NDBOX(0);
 	double		result;
-	int			i,
-				j;
+	int			i;
 
 	#ifdef TRACE
 	fprintf(stderr, "cube_size\n");
 	#endif
 
 	result = 1.0;
-	for (i = 0, j = a->dim; i < a->dim; i++, j++)
-		result = result * Abs((a->x[j] - a->x[i]));
+	for (i = 0; i < DIM(a); i++)
+		result = result * Abs((LL_COORD(a,i) - UR_COORD(a,i)));
 
 	PG_FREE_IF_COPY(a, 0);
 	PG_RETURN_FLOAT8(result);
@@ -1051,7 +1050,7 @@ cube_cmp_v0(NDBOX *a, NDBOX *b)
 			Min(LL_COORD(b, i), UR_COORD(b, i)))
 			return 1;
 		if (Min(LL_COORD(a, i), UR_COORD(a, i)) <
-      Min(LL_COORD(b, i), UR_COORD(b, i)))
+			Min(LL_COORD(b, i), UR_COORD(b, i)))
 			return -1;
 	}
 	for (i = 0; i < dim; i++)
