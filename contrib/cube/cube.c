@@ -476,9 +476,6 @@ g_cube_penalty(PG_FUNCTION_ARGS)
 	rt_cube_size(DatumGetNDBOX(origentry->key), &tmp2);
 	*result = (float) (tmp1 - tmp2);
 
-	/*
-	 * fprintf(stderr, "penalty\n"); fprintf(stderr, "\t%g\n", *result);
-	 */
 	PG_RETURN_FLOAT8(*result);
 }
 
@@ -764,10 +761,6 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 	bool		point_result = true;
 	NDBOX	   *result;
 
-	#ifdef TRACE
-	fprintf(stderr, "cube_union_v0\n");
-	#endif
-
 	/* let's try to guess result for same pointers */
 	if (a == b)
 		return a;
@@ -844,7 +837,6 @@ cube_inter(PG_FUNCTION_ARGS)
 	NDBOX	   *b = PG_GETARG_NDBOX(1);
 	NDBOX	   *result;
 	bool		swapped = false,
-				// overlap = true,
 				point_result = true;
 	int			i;
 
@@ -920,10 +912,6 @@ cube_size(PG_FUNCTION_ARGS)
 	double		result;
 	int			i;
 
-	#ifdef TRACE
-	fprintf(stderr, "cube_size\n");
-	#endif
-
 	result = 1.0;
 	for (i = 0; i < DIM(a); i++)
 		result = result * Abs((LL_COORD(a,i) - UR_COORD(a,i)));
@@ -937,10 +925,6 @@ void
 rt_cube_size(NDBOX *a, double *size)
 {
 	int i;
-
-	#ifdef TRACE
-	fprintf(stderr, "rt_cube_size\n");
-	#endif
 
 	if (a == (NDBOX *) NULL)
 		*size = 0.0;
