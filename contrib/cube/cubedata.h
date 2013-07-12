@@ -8,17 +8,17 @@ typedef struct NDBOX
 	int32 vl_len_;
 
 	/* 
-	** Header contains info about NDBOX. For binary
-	** compatibility with old versions it is defined
-	** as uint32.
-	** 
-	** Following information stored:
-	**
-	** bits 0-7  : number of cube dimensions;
-	** bits 8-30 : not used;
-	** bit  31   : point flag. If set, then NDBOX stores
-	**             n dimensions instead of 2*n;
-	*/
+	 * Header contains info about NDBOX. For binary
+	 * compatibility with old versions it is defined
+	 * as uint32.
+	 * 
+	 * Following information is stored:
+	 *
+	 *  bits 0-7  : number of cube dimensions;
+	 *  bits 8-30 : not used;
+	 *  bit  31   : point flag. If set, then NDBOX stores
+	 *             n dimensions instead of 2*n;
+	 */
 	unsigned int header;
 	double x[1];
 } NDBOX;
