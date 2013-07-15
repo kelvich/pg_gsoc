@@ -65,6 +65,38 @@ Datum		cube_subset(PG_FUNCTION_ARGS);
 Datum		cube_sort_by(PG_FUNCTION_ARGS);
 
 /*
+ * Input/Output for typed cubes
+ */
+CUBE_TYPE_WRAPPER1(cube_in, FLOAT4);
+CUBE_TYPE_WRAPPER1(cube_a_f8, FLOAT4);
+CUBE_TYPE_WRAPPER1(cube_f8, FLOAT4);
+CUBE_TYPE_WRAPPER2(cube_a_f8_f8, FLOAT4);
+CUBE_TYPE_WRAPPER2(cube_f8_f8, FLOAT4);
+CUBE_OUT_WRAPPER(FLOAT4);
+
+CUBE_TYPE_WRAPPER1(cube_in, INT4);
+CUBE_TYPE_WRAPPER1(cube_a_f8, INT4);
+CUBE_TYPE_WRAPPER1(cube_f8, INT4);
+CUBE_TYPE_WRAPPER2(cube_a_f8_f8, INT4);
+CUBE_TYPE_WRAPPER2(cube_f8_f8, INT4);
+CUBE_OUT_WRAPPER(INT4);
+
+CUBE_TYPE_WRAPPER1(cube_in, INT2);
+CUBE_TYPE_WRAPPER1(cube_a_f8, INT2);
+CUBE_TYPE_WRAPPER1(cube_f8, INT2);
+CUBE_TYPE_WRAPPER2(cube_a_f8_f8, INT2);
+CUBE_TYPE_WRAPPER2(cube_f8_f8, INT2);
+CUBE_OUT_WRAPPER(INT2);
+
+CUBE_TYPE_WRAPPER1(cube_in, INT1);
+CUBE_TYPE_WRAPPER1(cube_a_f8, INT1);
+CUBE_TYPE_WRAPPER1(cube_f8, INT1);
+CUBE_TYPE_WRAPPER2(cube_a_f8_f8, INT1);
+CUBE_TYPE_WRAPPER2(cube_f8_f8, INT1);
+CUBE_OUT_WRAPPER(INT1);
+
+
+/*
 ** GiST support methods
 */
 PG_FUNCTION_INFO_V1(g_cube_consistent);
@@ -256,8 +288,13 @@ cube_a_f8(PG_FUNCTION_ARGS)
 	SET_DIM(result, dim);
 	SET_POINT_BIT(result);
 
+	printf("cube_a_f8\n");
 	for (i = 0; i < dim; i++)
+	{
+		printf("el = %f \n", dur[i]);
 		result->x[i] = dur[i];
+	}
+		
 
 	PG_RETURN_NDBOX(result);
 }
@@ -365,6 +402,74 @@ cube_out(PG_FUNCTION_ARGS)
 	PG_RETURN_CSTRING(buf.data);
 }
 
+/*****************************************************************************
+ *					In/out functions for types support
+ *****************************************************************************/
+
+// Datum
+// cube_a_f4(PG_FUNCTION_ARGS)
+// {
+// 	Datum		arr = PG_GETARG_DATUM(0);
+// 	NDBOX	   *result;
+
+// 	result = DatumGetNDBOX(DirectFunctionCall1(cube_a_f8, arr));
+// 	SET_TYPE(result, CUBE_F4);
+// 	PG_RETURN_NDBOX(result);
+// }
+
+// Datum
+// cube_a_f4_f4(PG_FUNCTION_ARGS)
+// {
+// 	Datum		arr1 = PG_GETARG_DATUM(0);
+// 	Datum		arr2 = PG_GETARG_DATUM(1);
+// 	NDBOX	   *result;
+
+// 	result = DatumGetNDBOX(DirectFunctionCall2(cube_a_f8_f8, arr1, arr2));
+// 	SET_TYPE(result, CUBE_F4);
+// 	PG_RETURN_NDBOX(result);
+// }
+
+// Datum
+// cube_f4(PG_FUNCTION_ARGS)
+// {
+// 	Datum		f = PG_GETARG_DATUM(0);
+// 	NDBOX	   *result;
+
+// 	result = DatumGetNDBOX(DirectFunctionCall1(cube_f8, f));
+// 	SET_TYPE(result, CUBE_F4);
+// 	PG_RETURN_NDBOX(result);
+// }
+
+// Datum
+// cube_f4_f4(PG_FUNCTION_ARGS)
+// {
+// 	Datum		f1 = PG_GETARG_DATUM(0);
+// 	Datum		f2 = PG_GETARG_DATUM(1);
+// 	NDBOX	   *result;
+
+// 	result = DatumGetNDBOX(DirectFunctionCall2(cube_f8_f8, f1, f2));
+// 	SET_TYPE(result, CUBE_F4);
+// 	PG_RETURN_NDBOX(result);
+// }
+
+// Datum
+// cube_in_f4(PG_FUNCTION_ARGS)
+// {
+// 	Datum		str = PG_GETARG_DATUM(0);
+// 	NDBOX	   *result;
+
+// 	result = DatumGetNDBOX(DirectFunctionCall1(cube_in, str));
+// 	SET_TYPE(result, CUBE_F4);
+// 	PG_RETURN_NDBOX(result);
+// }
+
+// Datum
+// cube_out_f4(PG_FUNCTION_ARGS)
+// {
+// 	PG_RETURN_CSTRING(
+// 		DatumGetCString(
+// 			DirectFunctionCall1(cube_out, PG_GETARG_DATUM(0))));
+// }
 
 /*****************************************************************************
  *						   GiST functions
