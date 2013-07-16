@@ -23,6 +23,38 @@ typedef struct NDBOX
 	double x[1];
 } NDBOX;
 
+typedef struct COMPRESSED_NDBOX_F4
+{
+	unsigned int dim	:8;
+	unsigned int point	:1;
+	unsigned int type	:3;
+	float x[1];
+} COMPRESSED_NDBOX_F4;
+
+typedef struct COMPRESSED_NDBOX_I4
+{
+	unsigned int dim	:8;
+	unsigned int point	:1;
+	unsigned int type	:3;
+	int x[1];
+} COMPRESSED_NDBOX_I4;
+
+typedef struct COMPRESSED_NDBOX_I2
+{
+	unsigned int dim	:8;
+	unsigned int point	:1;
+	unsigned int type	:3;
+	short x[1];
+} COMPRESSED_NDBOX_I2;
+
+typedef struct COMPRESSED_NDBOX_I1
+{
+	unsigned int dim	:8;
+	unsigned int point	:1;
+	unsigned int type	:3;
+	char x[1];
+} COMPRESSED_NDBOX_I1;
+
 enum cube_types 
 {
 	CUBE_FLOAT8,

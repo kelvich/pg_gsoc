@@ -482,15 +482,81 @@ g_cube_union(PG_FUNCTION_ARGS)
 Datum
 g_cube_compress(PG_FUNCTION_ARGS)
 {
-	GISTENTRY *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
-	PG_RETURN_POINTER(entry);
+	GISTENTRY		*entry = (GISTENTRY *) PG_GETARG_POINTER(0);
+	GISTENTRY		*retval;
+	NDBOX 			*cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
+	int				i, mult;
+
+	if (TYPE(cube) == CUBE_FLOAT4)
+	{
+		COMPRESSED_NDBOX_F4		*compressed_cube;
+		mult = (!IS_POINT(cube)) + 1;
+		compressed_cube = palloc0(offsetof(COMPRESSED_NDBOX_F4, x[0]) + mult*sizeof(float));
+		compressed_cube->dim = DIM(cube);
+		compressed_cube->type = TYPE(cube);
+		compressed_cube->point = IS_POINT(cube);
+		for(i=0; i<mult*compressed_cube->dim; i++)
+			compressed_cube->x[i] = (float) cube->x[i];
+
+		retval = palloc(sizeof(GISTENTRY));
+		gistentryinit(*retval, PointerGetDatum(compressed_cube),
+					entry->rel, entry->page, entry->offset, FALSE);
+		PG_RETURN_POINTER(retval);	
+	}
+	else
+	{
+		NDBOX		*compressed_cube;
+		compressed_cube = cube;
+
+		retval = palloc(sizeof(GISTENTRY));
+		gistentryinit(*retval, PointerGetDatum(compressed_cube),
+					entry->rel, entry->page, entry->offset, FALSE);
+		PG_RETURN_POINTER(retval);
+	}
+
 }
 
 Datum
 g_cube_decompress(PG_FUNCTION_ARGS)
 {
-	GISTENTRY *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
-	PG_RETURN_POINTER(entry);
+	GISTENTRY		*entry = (GISTENTRY *) PG_GETARG_POINTER(0);
+	GISTENTRY		*retval;
+	NDBOX			*cube;
+	int				i, mult;
+	COMPRESSED_NDBOX_I4			*compressed_cube_ptr;
+	compressed_cube_ptr = (COMPRESSED_NDBOX_I4*) DatumGetPointer(PG_DETOAST_DATUM(entry->key));	
+
+	if (compressed_cube_ptr->type == CUBE_FLOAT4)
+	{
+		COMPRESSED_NDBOX_F4 	*compressed_cube;
+		compressed_cube = (COMPRESSED_NDBOX_F4 *) compressed_cube_ptr;
+		mult = (!compressed_cube->point) + 1;
+		cube = palloc0(offsetof(NDBOX, x[0]) + mult*sizeof(double));
+		SET_VARSIZE(cube, offsetof(NDBOX, x[0]) + mult*sizeof(double));
+		SET_DIM(cube, compressed_cube->dim);
+		if (compressed_cube->point)
+			SET_POINT_BIT(cube);
+		SET_TYPE(cube, compressed_cube->type);
+		for(i=0; i<mult*compressed_cube->dim; i++)
+			cube->x[i] = (double) compressed_cube->x[i];
+		
+		retval = palloc(sizeof(GISTENTRY));
+		gistentryinit(*retval, PointerGetDatum(compressed_cube),
+					entry->rel, entry->page, entry->offset, FALSE);
+	}
+	else
+	{
+		NDBOX 	*compressed_cube;
+		compressed_cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
+		cube = compressed_cube;
+		retval = palloc(sizeof(GISTENTRY));
+		gistentryinit(*retval, PointerGetDatum(compressed_cube),
+					entry->rel, entry->page, entry->offset, FALSE);
+	}
+			
+
+	
+	PG_RETURN_POINTER(retval);
 }
 
 
