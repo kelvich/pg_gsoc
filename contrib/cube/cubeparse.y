@@ -32,7 +32,7 @@ void cube_yyerror(const char *message);
 int cube_yyparse(void *result);
 
 static int delim_count(char *s, char delim);
-static NDBOX * write_box(unsigned int dim, char *str1, char *str2);
+static NDBOX * write_box(unsigned int dim, char *str1, char *str2, char *typestr);
 static NDBOX * write_point_as_box(char *s, int dim);
 
 %}
@@ -70,7 +70,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
 			YYABORT;
 		}
 
-		*((void **)result) = write_box( dim, $2, $4 );
+		*((void **)result) = write_box( dim, $2, $4, $5 );
 
 	}
 
@@ -97,7 +97,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
 			YYABORT;
 		}
 
-		*((void **)result) = write_box( dim, $1, $3 );
+		*((void **)result) = write_box( dim, $1, $3, "" );
 	}
 
 	| paren_list
