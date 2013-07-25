@@ -41,13 +41,13 @@ static NDBOX * write_point_as_box(char *s, int dim);
 %expect 0
 %name-prefix="cube_yy"
 
-%token CUBEFLOAT O_PAREN C_PAREN O_BRACKET C_BRACKET COMMA
+%token CUBEFLOAT O_PAREN C_PAREN O_BRACKET C_BRACKET COMMA TYPMOD
 %start box
 
 /* Grammar follows */
 %%
 
-box: O_BRACKET paren_list COMMA paren_list C_BRACKET
+box: O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
 	{
 		int dim;
 
@@ -170,7 +170,7 @@ delim_count(char *s, char delim)
 }
 
 static NDBOX *
-write_box(unsigned int dim, char *str1, char *str2)
+write_box(unsigned int dim, char *str1, char *str2, char *typestr)
 {
 	NDBOX	   *bp;
 	char	   *s;

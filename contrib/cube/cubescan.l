@@ -40,6 +40,7 @@ n            [0-9]+
 integer      [+-]?{n}
 real         [+-]?({n}\.{n}?|\.{n})
 float        ({integer}|{real})([eE]{integer})?
+typmod		 (:(f8|f4|i4|i2|i1))?
 
 %%
 
@@ -49,6 +50,7 @@ float        ({integer}|{real})([eE]{integer})?
 \(           yylval = "("; return O_PAREN;
 \)           yylval = ")"; return C_PAREN;
 \,           yylval = ")"; return COMMA;
+{typmod}     yylval = yytext; return TYPMOD;
 [ \t\n\r\f]+ /* discard spaces */
 .            return yytext[0]; /* alert parser of the garbage */
 
