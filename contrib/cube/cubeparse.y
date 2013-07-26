@@ -9,10 +9,8 @@
 #define YYDEBUG 1
 
 #include "postgres.h"
-#include "cubedata.h"
 
-extern double get_coord(NDBOX *cube, int i);
-extern void set_coord(NDBOX *cube, int i, double value);
+#include "cubedata.h"
 
 /*
  * Bison doesn't allocate anything that needs to live across parser calls,
@@ -53,7 +51,7 @@ static NDBOX * write_point_as_box(char *s, int dim, char *typestr);
 box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	{
 		int dim;
-		printf("BpCpB\n");
+
 		if ( (dim = check_dim($2, $4)) && check_maxdim(dim, $2) )
 			*((void **)result) = write_box(dim, $2, $4, "");
 		else
@@ -63,7 +61,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	| O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
 	{
 		int dim;
-		printf("BpCpBT\n");
+
 		if ( (dim = check_dim($2, $4)) && check_maxdim(dim, $2) )
 			*((void **)result) = write_box(dim, $2, $4, $6);
 		else
@@ -73,7 +71,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	| paren_list COMMA paren_list
 	{
 		int dim;
-		printf("pCp\n");
+
 		if ( (dim = check_dim($1, $3)) && check_maxdim(dim, $1) )
 			*((void **)result) = write_box(dim, $1, $3, "");
 		else
@@ -83,7 +81,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	| paren_list COMMA paren_list TYPMOD
 	{
 		int dim;
-		printf("pCpT\n");
+
 		if ( (dim = check_dim($1, $3)) && check_maxdim(dim, $1) )
 			*((void **)result) = write_box(dim, $1, $3, $4);
 		else
@@ -207,7 +205,7 @@ write_box(int dim, char *str1, char *str2, char *typestr)
 {
 	NDBOX	   *bp;
 	char	   *s;
-	int			i, size, type;
+	int			i, type;
 	bool		point = true;
 
 	if (strcmp(typestr, ":f4") == 0)
@@ -221,14 +219,7 @@ write_box(int dim, char *str1, char *str2, char *typestr)
 	else
 		type = CUBE_FLOAT8;
 
-	printf("typestr: '%s'\n", typestr);
-	printf("type: %i\n", type);
-
-	size = CUBE_SIZE(dim);
-	bp = palloc0(size);
-	SET_VARSIZE(bp, size);
-	SET_DIM(bp, dim);
-	SET_TYPE(bp, type);
+	bp = init_cube(dim, 0, type);
 
 	s = str1;
 	set_coord(bp, i=0, strtod(s, NULL));
@@ -252,12 +243,7 @@ write_box(int dim, char *str1, char *str2, char *typestr)
 		point = false;
 
 	if (point)
-	{
-		size = POINT_SIZE(dim);
-		bp = repalloc(bp, size);
-		SET_VARSIZE(bp, size);
-		SET_POINT_BIT(bp);
-	}
+		cube_to_point(bp);
 
 	return(bp);
 }
@@ -266,7 +252,7 @@ static NDBOX *
 write_point_as_box(char *str, int dim, char *typestr)
 {
 	NDBOX		*bp;
-	int			i, size, type;
+	int			i, type;
 	double		x;
 	char		*s = str;
 
@@ -281,12 +267,7 @@ write_point_as_box(char *str, int dim, char *typestr)
 	else
 		type = CUBE_FLOAT8;
 
-	size = POINT_SIZE(dim);
-	bp = palloc0(size);
-	SET_VARSIZE(bp, size);
-	SET_DIM(bp, dim);
-	SET_TYPE(bp, type);
-	SET_POINT_BIT(bp);
+	bp = init_cube(dim, 1, type);
 
 	i = 0;
 	x = strtod(s, NULL);
