@@ -36,8 +36,6 @@ extern void cube_scanner_finish(void);
 */
 
 PG_FUNCTION_INFO_V1(cube_in);
-PG_FUNCTION_INFO_V1(cube_type_in);
-PG_FUNCTION_INFO_V1(cube_type_out);
 PG_FUNCTION_INFO_V1(cube);
 PG_FUNCTION_INFO_V1(cube_out);
 PG_FUNCTION_INFO_V1(cube_c_f8);
@@ -49,8 +47,6 @@ PG_FUNCTION_INFO_V1(cube_subset);
 PG_FUNCTION_INFO_V1(cube_sort_by);
 
 Datum		cube_in(PG_FUNCTION_ARGS);
-Datum		cube_type_in(PG_FUNCTION_ARGS);
-Datum		cube_type_out(PG_FUNCTION_ARGS);
 Datum		cube(PG_FUNCTION_ARGS);
 Datum		cube_out(PG_FUNCTION_ARGS);
 Datum		cube_c_f8(PG_FUNCTION_ARGS);

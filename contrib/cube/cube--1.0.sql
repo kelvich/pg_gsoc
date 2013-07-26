@@ -5,7 +5,7 @@
 
 -- Create the user-defined type for N-dimensional boxes
 
-CREATE FUNCTION cube_in(cstring, oid, integer)
+CREATE FUNCTION cube_in(cstring)
 RETURNS cube
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
