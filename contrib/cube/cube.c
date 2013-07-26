@@ -187,6 +187,52 @@ float8		cube_sort_by_v0(NDBOX *cube, int d);
 static double distance_1D(double a1, double a2, double b1, double b2);
 
 
+
+
+double get_coord(NDBOX *cube, int i);
+void set_coord(NDBOX *cube, int i, double value);
+
+// можно попробовать полагаться на сишную типизацию
+// и перегружать функции
+double get_coord(NDBOX *cube, int i){
+	switch (TYPE(cube))
+	{
+		case CUBE_FLOAT4:
+			return cube->coord_f4[i];
+		case CUBE_INT4:
+			return cube->coord_i4[i];
+		case CUBE_INT2:
+			return cube->coord_i2[i];
+		case CUBE_INT1:
+			return cube->coord_i1[i];
+		case CUBE_FLOAT8:
+		default:
+			return cube->coord_f8[i];
+	}
+}
+
+void set_coord(NDBOX *cube, int i, double value){
+	switch (TYPE(cube))
+	{
+		case CUBE_FLOAT8:
+			cube->coord_f8[i] = value;
+			break;
+		case CUBE_FLOAT4:
+			cube->coord_f4[i] = value;
+			break;
+		case CUBE_INT4:
+			cube->coord_i4[i] = value;
+			break;
+		case CUBE_INT2:
+			cube->coord_i2[i] = value;
+			break;
+		case CUBE_INT1:
+			cube->coord_i1[i] = value;
+			break;
+	}
+}
+
+
 /*****************************************************************************
  * Input/Output functions
  *****************************************************************************/
@@ -286,8 +332,8 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < dim; i++)
 	{
-		result->x[i] = dur[i];
-		result->x[i + dim] = dll[i];
+		set_coord(result, i, dur[i]);
+		set_coord(result, i+dim, dll[i]);
 		if (dur[i] != dll[i])
 			point = false;
 	}
@@ -335,7 +381,7 @@ cube_a_f8(PG_FUNCTION_ARGS)
 	for (i = 0; i < dim; i++)
 	{
 		printf("el = %f \n", dur[i]);
-		result->x[i] = dur[i];
+		set_coord(result, i, dur[i]);
 	}
 		
 
@@ -379,9 +425,9 @@ cube_subset(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_ARRAY_ELEMENT_ERROR),
 					 errmsg("Index out of bounds")));
 		}
-		result->x[i] = c->x[dx[i] - 1];
+		set_coord(result, i, LL_COORD(c, dx[i]-1));
 		if (!IS_POINT(c))
-			result->x[i + dim] = c->x[dx[i] + DIM(c) - 1];
+			set_coord(result, i+dim, UR_COORD(c, dx[i]-1));
 	}
 
 	PG_FREE_IF_COPY(c, 0);
@@ -536,34 +582,34 @@ g_cube_compress(PG_FUNCTION_ARGS)
 
 	switch (TYPE(cube))
 	{
-		case CUBE_FLOAT4:
-			size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(float);
-			compressed_cube = palloc0(size);
-			for(i=0; i<mult*DIM(cube); i++)
-				compressed_cube->coord_f4[i] = cube->x[i];
-			break;
+		// case CUBE_FLOAT4:
+		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(float);
+		// 	compressed_cube = palloc0(size);
+		// 	for(i=0; i<mult*DIM(cube); i++)
+		// 		compressed_cube->coord_f4[i] = cube->x[i];
+		// 	break;
 
-		case CUBE_INT4:
-			size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(int);
-			compressed_cube = palloc0(size);
-			for(i=0; i<mult*DIM(cube); i++)
-				compressed_cube->coord_i4[i] = cube->x[i];
-			break;
+		// case CUBE_INT4:
+		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(int);
+		// 	compressed_cube = palloc0(size);
+		// 	for(i=0; i<mult*DIM(cube); i++)
+		// 		compressed_cube->coord_i4[i] = cube->x[i];
+		// 	break;
 
-		case CUBE_INT2:
-			size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(short);
-			compressed_cube = palloc0(size);
-			for(i=0; i<mult*DIM(cube); i++)
-				compressed_cube->coord_i2[i] = cube->x[i];
-			break;
+		// case CUBE_INT2:
+		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(short);
+		// 	compressed_cube = palloc0(size);
+		// 	for(i=0; i<mult*DIM(cube); i++)
+		// 		compressed_cube->coord_i2[i] = cube->x[i];
+		// 	break;
 
-		case CUBE_INT1:
-			size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube);
-			compressed_cube = palloc0(size);
-			for(i=0; i<mult*DIM(cube); i++){
-				compressed_cube->coord_i1[i] = cube->x[i];
-			}
-			break;
+		// case CUBE_INT1:
+		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube);
+		// 	compressed_cube = palloc0(size);
+		// 	for(i=0; i<mult*DIM(cube); i++){
+		// 		compressed_cube->coord_i1[i] = cube->x[i];
+		// 	}
+		// 	break;
 
 		default:
 			gistentryinit(*retval, PointerGetDatum(cube),
@@ -920,26 +966,26 @@ cube_union_v0(NDBOX *a, NDBOX *b)
 	 /* compute the union */
 	for (i = 0; i < DIM(b); i++)
 	{
-		result->x[i] = Min(
+		set_coord(result, i, Min(
 			Min(LL_COORD(a,i), UR_COORD(a,i)),
 			Min(LL_COORD(b,i), UR_COORD(b,i))
-		);
-		result->x[i + DIM(a)] = Max(
+		));
+		set_coord(result, i + DIM(a), Max(
 			Max(LL_COORD(a,i), UR_COORD(a,i)), 
 			Max(LL_COORD(b,i), UR_COORD(b,i))
-		);
-		if (result->x[i] != result->x[i + DIM(a)])
+		));
+		if (LL_COORD(result,i) != UR_COORD(result,i))
 			point_result = false;
 	}
 	for (i = DIM(b); i < DIM(a); i++)
 	{
-		result->x[i] = Min(0,
+		set_coord(result, i, Min(0,
 			Min(LL_COORD(a,i), UR_COORD(a,i))
-		);
-		result->x[i + DIM(a)] = Max(0,
+		));
+		set_coord(result, i + DIM(a), Max(0,
 			Max(LL_COORD(a,i), UR_COORD(a,i))
-		);
-		if (result->x[i] != result->x[i + DIM(a)])
+		));
+		if (LL_COORD(result,i) != UR_COORD(result,i))
 			point_result = false;
 	}
 
@@ -996,26 +1042,27 @@ cube_inter(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < DIM(b); i++)
 	{
-		result->x[i] = Max(
+
+		set_coord(result, i, Max(
 			Min(LL_COORD(a,i), UR_COORD(a,i)),
 			Min(LL_COORD(b,i), UR_COORD(b,i))
-		);
-		result->x[i + DIM(a)] = Min(
+		));
+		set_coord(result, i + DIM(a), Min(
 			Max(LL_COORD(a,i), UR_COORD(a,i)),
 			Max(LL_COORD(b,i), UR_COORD(b,i))
-		);
-		if (result->x[i] != result->x[i + DIM(a)])
+		));
+		if (LL_COORD(result, i) != UR_COORD(result, i))
 			point_result = false;
 	}
 	for (i = DIM(b); i < DIM(a); i++)
 	{
-		result->x[i] = Max(0,
+		set_coord(result, i, Max(0,
 			Min(LL_COORD(a,i), UR_COORD(a,i))
-		);
-		result->x[i + DIM(a)] = Min(0,
+		));
+		set_coord(result, i + DIM(a), Min(0,
 			Max(LL_COORD(a,i), UR_COORD(a,i))
-		);
-		if (result->x[i] != result->x[i + DIM(a)])
+		));
+		if (LL_COORD(result, i) != UR_COORD(result, i))
 			point_result = false;
 	}
 
@@ -1559,28 +1606,29 @@ cube_enlarge(PG_FUNCTION_ARGS)
 	{
 		if (LL_COORD(a,i) >= UR_COORD(a,i))
 		{
-			result->x[i] = UR_COORD(a,i) - r;
-			result->x[j] = LL_COORD(a,i) + r;
+			set_coord(result, i, UR_COORD(a,i) - r);
+			set_coord(result, j, LL_COORD(a,i) + r);
 		}
 		else
 		{
-			result->x[i] = LL_COORD(a,i) - r;
-			result->x[j] = UR_COORD(a,i) + r;
+			set_coord(result, i, LL_COORD(a,i) - r);
+			set_coord(result, j, UR_COORD(a,i) + r);
 		}
-		if (result->x[i] > result->x[j])
+		if (LL_COORD(result, i) > LL_COORD(result, j))
 		{
-			result->x[i] = (result->x[i] + result->x[j]) / 2;
-			result->x[j] = result->x[i];
+			set_coord(result, i,
+				(LL_COORD(result, i) + LL_COORD(result, j)) / 2);
+			set_coord(result, j, LL_COORD(result, i));
 			shrunk_coordinates++;
 		}
-		else if (result->x[i] == result->x[j])
+		else if (LL_COORD(result, i)  == LL_COORD(result, j))
 			shrunk_coordinates++;
 	}
 	/* dim > a->dim only if r > 0 */
 	for (; i < dim; i++, j++)
 	{
-		result->x[i] = -r;
-		result->x[j] = r;
+		set_coord(result, i, -r);
+		set_coord(result, j, r);
 	}
 
 	/* Point can arise in two cases:
@@ -1612,7 +1660,7 @@ cube_f8(PG_FUNCTION_ARGS)
 	SET_DIM(result, 1);
 	SET_POINT_BIT(result);
 
-	result->x[0] = x;
+	set_coord(result, 0, x);
 
 	PG_RETURN_NDBOX(result);
 }
@@ -1634,7 +1682,7 @@ cube_f8_f8(PG_FUNCTION_ARGS)
 		SET_VARSIZE(result, size);
 		SET_DIM(result, 1);
 		SET_POINT_BIT(result);
-		result->x[0] = x0;
+		set_coord(result, 0, x0);
 	}
 	else
 	{
@@ -1642,8 +1690,8 @@ cube_f8_f8(PG_FUNCTION_ARGS)
 		result = (NDBOX *) palloc0(size);
 		SET_VARSIZE(result, size);
 		SET_DIM(result, 1);
-		result->x[0] = x0;
-		result->x[1] = x1;
+		set_coord(result, 0, x0);
+		set_coord(result, 1, x1);
 	}
 
 	PG_RETURN_NDBOX(result);
@@ -1669,8 +1717,8 @@ cube_c_f8(PG_FUNCTION_ARGS)
 		SET_DIM(result, DIM(cube) + 1);
 		SET_POINT_BIT(result);
 		for (i = 0; i < DIM(cube); i++)
-			result->x[i] = cube->x[i];
-		result->x[DIM(result) - 1] = x;
+			set_coord(result, i, LL_COORD(cube, i));
+		set_coord(result, DIM(result) - 1, x);
 	}
 	else
 	{
@@ -1680,11 +1728,11 @@ cube_c_f8(PG_FUNCTION_ARGS)
 		SET_DIM(result, DIM(cube) + 1);
 		for (i = 0; i < DIM(cube); i++)
 		{
-			result->x[i] = cube->x[i];
-			result->x[DIM(result) + i] = cube->x[DIM(cube) + i];
+			set_coord(result, i, LL_COORD(cube, i));
+			set_coord(result, DIM(result) + i, UR_COORD(cube, i));
 		}
-		result->x[DIM(result) - 1] = x;
-		result->x[2*DIM(result) - 1] = x;
+		set_coord(result, DIM(result) - 1, x);
+		set_coord(result, 2*DIM(result) - 1, x);
 	}
 
 	PG_FREE_IF_COPY(cube, 0);
@@ -1710,8 +1758,8 @@ cube_c_f8_f8(PG_FUNCTION_ARGS)
 		SET_DIM(result, DIM(cube) + 1);
 		SET_POINT_BIT(result);
 		for (i = 0; i < DIM(cube); i++)
-			result->x[i] = cube->x[i];
-		result->x[DIM(result) - 1] = x1;
+			set_coord(result, i, LL_COORD(cube, i));
+		set_coord(result, DIM(result) - 1, x1);
 	}
 	else
 	{
@@ -1721,11 +1769,11 @@ cube_c_f8_f8(PG_FUNCTION_ARGS)
 		SET_DIM(result, DIM(cube) + 1);
 		for (i = 0; i < DIM(cube); i++)
 		{
-			result->x[i] = LL_COORD(cube, i);
-			result->x[DIM(result) + i] = UR_COORD(cube, i);
+			set_coord(result, i, LL_COORD(cube, i));
+			set_coord(result, DIM(result) + i, UR_COORD(cube, i));
 		}
-		result->x[DIM(result) - 1] = x1;
-		result->x[2 * DIM(result) - 1] = x2;
+		set_coord(result, DIM(result) - 1, x1);
+		set_coord(result, 2*DIM(result) - 1, x2);
 	}
 
 	PG_FREE_IF_COPY(cube, 0);

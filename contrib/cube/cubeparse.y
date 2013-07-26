@@ -12,6 +12,10 @@
 
 #include "cubedata.h"
 
+
+extern double get_coord(NDBOX *cube, int i);
+extern void set_coord(NDBOX *cube, int i, double value);
+
 /*
  * Bison doesn't allocate anything that needs to live across parser calls,
  * so we can easily have it use palloc instead of malloc.  This prevents
@@ -32,7 +36,9 @@ void cube_yyerror(const char *message);
 int cube_yyparse(void *result);
 
 static int delim_count(char *s, char delim);
-static NDBOX * write_box(unsigned int dim, char *str1, char *str2, char *typestr);
+static int check_dim(char *str1, char *str2);
+static bool check_maxdim(int dim, char *str1);
+static NDBOX * write_box(int dim, char *str1, char *str2, char *typestr);
 static NDBOX * write_point_as_box(char *s, int dim);
 
 %}
@@ -46,58 +52,44 @@ static NDBOX * write_point_as_box(char *s, int dim);
 
 /* Grammar follows */
 %%
-
-box: O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
+box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	{
 		int dim;
 
-		dim = delim_count($2, ',') + 1;
-		if ((delim_count($4, ',') + 1) != dim)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("bad cube representation"),
-					 errdetail("Different point dimensions in (%s) and (%s).",
-							   $2, $4)));
+		if ( (dim = check_dim($2, $4)) && check_maxdim(dim, $2) )
+			*((void **)result) = write_box(dim, $2, $4, "");
+		else
 			YYABORT;
-		}
-		if (dim > CUBE_MAX_DIM) {
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("bad cube representation"),
-					 errdetail("A cube cannot have more than %d dimensions.",
-							   CUBE_MAX_DIM)));
+	}
+
+	| O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
+	{
+		int dim;
+
+		if ( (dim = check_dim($2, $4)) && check_maxdim(dim, $2) )
+			*((void **)result) = write_box(dim, $2, $4, $5);
+		else
 			YYABORT;
-		}
-
-		*((void **)result) = write_box( dim, $2, $4, $5 );
-
 	}
 
 	| paren_list COMMA paren_list
 	{
 		int dim;
 
-		dim = delim_count($1, ',') + 1;
-
-		if ( (delim_count($3, ',') + 1) != dim ) {
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("bad cube representation"),
-					 errdetail("Different point dimensions in (%s) and (%s).",
-							   $1, $3)));
+		if ( (dim = check_dim($1, $3)) && check_maxdim(dim, $1) )
+			*((void **)result) = write_box(dim, $1, $3, "");
+		else
 			YYABORT;
-		}
-		if (dim > CUBE_MAX_DIM) {
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("bad cube representation"),
-					 errdetail("A cube cannot have more than %d dimensions.",
-							   CUBE_MAX_DIM)));
-			YYABORT;
-		}
+	}
 
-		*((void **)result) = write_box( dim, $1, $3, "" );
+	| paren_list COMMA paren_list TYPMOD
+	{
+		int dim;
+
+		if ( (dim = check_dim($1, $3)) && check_maxdim(dim, $1) )
+			*((void **)result) = write_box(dim, $1, $3, "");
+		else
+			YYABORT;
 	}
 
 	| paren_list
@@ -105,14 +97,19 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
 		int dim;
 
 		dim = delim_count($1, ',') + 1;
-		if (dim > CUBE_MAX_DIM) {
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("bad cube representation"),
-					 errdetail("A cube cannot have more than %d dimensions.",
-							   CUBE_MAX_DIM)));
+		if (!check_maxdim(dim, $1))
 			YYABORT;
-		}
+
+		*((void **)result) = write_point_as_box($1, dim);
+	}
+
+	| paren_list TYPMOD
+	{
+		int dim;
+
+		dim = delim_count($1, ',') + 1;
+		if (!check_maxdim(dim, $1))
+			YYABORT;
 
 		*((void **)result) = write_point_as_box($1, dim);
 	}
@@ -122,14 +119,20 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
 		int dim;
 
 		dim = delim_count($1, ',') + 1;
-		if (dim > CUBE_MAX_DIM) {
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("bad cube representation"),
-					 errdetail("A cube cannot have more than %d dimensions.",
-							   CUBE_MAX_DIM)));
+		if (!check_maxdim(dim, $1))
 			YYABORT;
-		}
+
+		*((void **)result) = write_point_as_box($1, dim);
+	}
+
+	| list TYPMOD
+	{
+		int dim;
+
+		dim = delim_count($1, ',') + 1;
+		if (!check_maxdim(dim, $1))
+			YYABORT;
+
 		*((void **)result) = write_point_as_box($1, dim);
 	}
 	;
@@ -169,39 +172,73 @@ delim_count(char *s, char delim)
 	return (ndelim);
 }
 
+static int
+check_dim(char *str1, char *str2)
+{
+	int dim;
+
+	dim = delim_count(str1, ',') + 1;
+	if ((delim_count(str2, ',') + 1) != dim)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("bad cube representation"),
+				 errdetail("Different point dimensions in (%s) and (%s).",
+						   str1, str2)));
+		return 0;
+	} else 
+		return dim;
+}
+
+static bool
+check_maxdim(int dim, char *str1)
+{
+	if (dim > CUBE_MAX_DIM) {
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("bad cube representation"),
+				 errdetail("A cube cannot have more than %d dimensions.",
+						   CUBE_MAX_DIM)));
+		return 0;
+	} else 
+		return 1;
+}
+
 static NDBOX *
-write_box(unsigned int dim, char *str1, char *str2, char *typestr)
+write_box(int dim, char *str1, char *str2, char *typestr)
 {
 	NDBOX	   *bp;
 	char	   *s;
 	int			i;
-	int			size = CUBE_SIZE(dim);
+	int			size;
 	bool		point = true;
 
+	size = CUBE_SIZE(dim);
 	bp = palloc0(size);
 	SET_VARSIZE(bp, size);
 	SET_DIM(bp, dim);
 
 	s = str1;
-	bp->x[i=0] = strtod(s, NULL);
+	set_coord(bp, i=0, strtod(s, NULL));
 	while ((s = strchr(s, ',')) != NULL)
 	{
 		s++; i++;
-		bp->x[i] = strtod(s, NULL);
+		set_coord(bp, i, strtod(s, NULL));
 	}
 
 	s = str2;
-	bp->x[i=dim] = strtod(s, NULL);
+	set_coord(bp, i=dim, strtod(s, NULL));
 	while ((s = strchr(s, ',')) != NULL)
 	{
 		s++; i++;
-		bp->x[i] = strtod(s, NULL);
-		if (bp->x[i] != bp->x[i-dim])
+		set_coord(bp, i, strtod(s, NULL));
+		if (LL_COORD(bp, i-dim) != UR_COORD(bp, i-dim))
 			point = false;
 	}
 
-	if (bp->x[0] != bp->x[dim])
+	if (LL_COORD(bp, 0) != UR_COORD(bp, 0))
 		point = false;
+
 	if (point)
 	{
 		size = POINT_SIZE(dim);
@@ -230,12 +267,12 @@ write_point_as_box(char *str, int dim)
 
 	i = 0;
 	x = strtod(s, NULL);
-	bp->x[0] = x;
+	set_coord(bp, 0, x);
 	while ((s = strchr(s, ',')) != NULL)
 	{
 		s++; i++;
 		x = strtod(s, NULL);
-		bp->x[i] = x;
+		set_coord(bp, i, x);
 	}
 
 	return(bp);

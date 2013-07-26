@@ -21,7 +21,15 @@ typedef struct NDBOX
 	 *              n dimensions instead of 2*n;
 	 */
 	unsigned int header;
-	double x[1];
+
+	union
+	{
+		double	coord_f8[1];
+		float 	coord_f4[1];
+		int 	coord_i4[1];
+		short 	coord_i2[1];
+		char	coord_i1[1];
+	};
 	
 } NDBOX;
 
@@ -72,11 +80,11 @@ enum cube_types
 #define SET_POINT_BIT(cube) ( cube->header |= 0x80000000 )
 #define IS_POINT(cube) ( (cube->header & 0x80000000) >> 31 )
 
-#define POINT_SIZE(_dim) (offsetof(NDBOX, x[0]) + sizeof(double)*_dim)
-#define CUBE_SIZE(_dim)  (offsetof(NDBOX, x[0]) + sizeof(double)*_dim*2)
+#define POINT_SIZE(_dim) (offsetof(NDBOX, coord_f8[0]) + sizeof(double)*_dim)
+#define CUBE_SIZE(_dim)  (offsetof(NDBOX, coord_f8[0]) + sizeof(double)*_dim*2)
 
-#define LL_COORD(cube, i) ( cube->x[i] )
-#define UR_COORD(cube, i) ( IS_POINT(cube) ? cube->x[i] : cube->x[i + DIM(cube)] )
+#define LL_COORD(cube, i) ( get_coord(cube, i) )
+#define UR_COORD(cube, i) ( IS_POINT(cube) ? get_coord(cube, i) : get_coord(cube, i + DIM(cube)) )
 
 
 /*

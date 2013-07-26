@@ -40,7 +40,7 @@ n            [0-9]+
 integer      [+-]?{n}
 real         [+-]?({n}\.{n}?|\.{n})
 float        ({integer}|{real})([eE]{integer})?
-typmod		 (:(f8|f4|i4|i2|i1))?
+typmod		 :(f8|f4|i4|i2|i1)
 
 %%
 
