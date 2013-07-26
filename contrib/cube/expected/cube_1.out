@@ -553,6 +553,177 @@ SELECT cube(cube(1,2), 42, 24); -- cube_c_f8_f8
 (1 row)
 
 --
+-- Test typed cubes
+--
+SELECT cube_i1(array[1.0]);
+ cube_i1 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i1(array[1,12,3,4]);
+    cube_i1    
+---------------
+ (1, 12, 3, 4)
+(1 row)
+
+SELECT cube_i1(array[1],array[1]);
+ cube_i1 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i1(array[1,12,3,4], array[1,42,3,4]);
+           cube_i1           
+-----------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4)
+(1 row)
+
+SELECT cube_i1(1);
+ cube_i1 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i1(3, 4);
+ cube_i1 
+---------
+ (3),(4)
+(1 row)
+
+SELECT cube_i1(3, 3);
+ cube_i1 
+---------
+ (3)
+(1 row)
+
+SELECT cube_i2(array[1.0]);
+ cube_i2 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i2(array[1,12,3,4]);
+    cube_i2    
+---------------
+ (1, 12, 3, 4)
+(1 row)
+
+SELECT cube_i2(array[1],array[1]);
+ cube_i2 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i2(array[1,12,3,4], array[1,42,3,4]);
+           cube_i2           
+-----------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4)
+(1 row)
+
+SELECT cube_i2(1);
+ cube_i2 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i2(3, 4);
+ cube_i2 
+---------
+ (3),(4)
+(1 row)
+
+SELECT cube_i2(3, 3);
+ cube_i2 
+---------
+ (3)
+(1 row)
+
+SELECT cube_i4(array[1.0]);
+ cube_i4 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i4(array[1,12,3,4]);
+    cube_i4    
+---------------
+ (1, 12, 3, 4)
+(1 row)
+
+SELECT cube_i4(array[1],array[1]);
+ cube_i4 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i4(array[1,12,3,4], array[1,42,3,4]);
+           cube_i4           
+-----------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4)
+(1 row)
+
+SELECT cube_i4(1);
+ cube_i4 
+---------
+ (1)
+(1 row)
+
+SELECT cube_i4(3, 4);
+ cube_i4 
+---------
+ (3),(4)
+(1 row)
+
+SELECT cube_i4(3, 3);
+ cube_i4 
+---------
+ (3)
+(1 row)
+
+SELECT cube_f4(array[1.0]);
+ cube_f4 
+---------
+ (1)
+(1 row)
+
+SELECT cube_f4(array[1,12,3,4]);
+    cube_f4    
+---------------
+ (1, 12, 3, 4)
+(1 row)
+
+SELECT cube_f4(array[1],array[1]);
+ cube_f4 
+---------
+ (1)
+(1 row)
+
+SELECT cube_f4(array[1,12,3,4], array[1,42,3,4]);
+           cube_f4           
+-----------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4)
+(1 row)
+
+SELECT cube_f4(1);
+ cube_f4 
+---------
+ (1)
+(1 row)
+
+SELECT cube_f4(3, 4);
+ cube_f4 
+---------
+ (3),(4)
+(1 row)
+
+SELECT cube_f4(3, 3);
+ cube_f4 
+---------
+ (3)
+(1 row)
+
+--
 -- Testing limit of CUBE_MAX_DIM dimensions check in cube_in.
 --
 select '(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)'::cube;

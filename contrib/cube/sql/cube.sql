@@ -132,6 +132,41 @@ SELECT cube(cube(1,2), 42, 42); -- cube_c_f8_f8
 SELECT cube(cube(1,2), 42, 24); -- cube_c_f8_f8
 
 --
+-- Test typed cubes
+--
+SELECT cube_i1(array[1.0]);
+SELECT cube_i1(array[1,12,3,4]);
+SELECT cube_i1(array[1],array[1]);
+SELECT cube_i1(array[1,12,3,4], array[1,42,3,4]);
+SELECT cube_i1(1);
+SELECT cube_i1(3, 4);
+SELECT cube_i1(3, 3);
+
+SELECT cube_i2(array[1.0]);
+SELECT cube_i2(array[1,12,3,4]);
+SELECT cube_i2(array[1],array[1]);
+SELECT cube_i2(array[1,12,3,4], array[1,42,3,4]);
+SELECT cube_i2(1);
+SELECT cube_i2(3, 4);
+SELECT cube_i2(3, 3);
+
+SELECT cube_i4(array[1.0]);
+SELECT cube_i4(array[1,12,3,4]);
+SELECT cube_i4(array[1],array[1]);
+SELECT cube_i4(array[1,12,3,4], array[1,42,3,4]);
+SELECT cube_i4(1);
+SELECT cube_i4(3, 4);
+SELECT cube_i4(3, 3);
+
+SELECT cube_f4(array[1.0]);
+SELECT cube_f4(array[1,12,3,4]);
+SELECT cube_f4(array[1],array[1]);
+SELECT cube_f4(array[1,12,3,4], array[1,42,3,4]);
+SELECT cube_f4(1);
+SELECT cube_f4(3, 4);
+SELECT cube_f4(3, 3);
+
+--
 -- Testing limit of CUBE_MAX_DIM dimensions check in cube_in.
 --
 

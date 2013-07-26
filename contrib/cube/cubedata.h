@@ -33,30 +33,6 @@ typedef struct NDBOX
 	
 } NDBOX;
 
-
-// если делаем union, то появляется отступ в 3 байта
-// с union:
-//         RawDataBody:
-//           30 00 00 00 09 00 00 00
-//           03 04 05 06 00 00 00 00
-// без union:
-//        RawDataBody:
-//          24 00 00 00 09 03 04 05
-//          06 00 00 00 00 00 00 00
-typedef struct COMPRESSED_NDBOX
-{
-	int32 vl_len_;
-	unsigned char point      :1;
-	unsigned char type       :3;
-	union 
-	{
-		float 	coord_f4[1];
-		int 	coord_i4[1];
-		short 	coord_i2[1];
-		char	coord_i1[1];
-	};
-} COMPRESSED_NDBOX;
-
 enum cube_types 
 {
 	CUBE_FLOAT8,
@@ -89,55 +65,30 @@ enum cube_types
 
 /*
  *	Macroses for generating wrappers over cube creation functions.
- *	That mocroses set type to cube header for further comperession.
- *  For example CUBE_TYPE_WRAPPER2(cube_a_f8_f8, INT4) generates
- *  function _FLOAT4_cube_a_f8_f8(double[], double[]) that toggles FLOAT4
+ *	That macroses passes type argument to underlying function.
+ *  For example CUBE_TYPE_WRAPPER2(cube_arr_arr, INT4) generates
+ *  function cube_arr_arr_INT4(double[], double[]) that toggles INT4
  *  type to created cube.
  *  
  *  	CUBE_TYPE_WRAPPER1 for single argument functions
  *  	CUBE_TYPE_WRAPPER2 for functions with two arguments
  */
 #define CUBE_TYPE_WRAPPER1(func, type) \
-	PG_FUNCTION_INFO_V1( _## type ##_## func ); \
-	Datum		_## type ##_## func (PG_FUNCTION_ARGS); \
-	Datum \
-	_## type ##_## func (PG_FUNCTION_ARGS) \
+	PG_FUNCTION_INFO_V1( func ##_## type ); \
+	Datum func ##_## type (PG_FUNCTION_ARGS); \
+	Datum func ##_## type (PG_FUNCTION_ARGS)  \
 	{ \
-		Datum		arg = PG_GETARG_DATUM(0); \
-		NDBOX	   *result; \
-		result = DatumGetNDBOX(DirectFunctionCall1(func, arg)); \
-		SET_TYPE(result, CUBE_ ## type); \
-		PG_RETURN_NDBOX(result); \
+		Datum	arg = PG_GETARG_DATUM(0); \
+		PG_RETURN_NDBOX(func(arg, CUBE_##type)); \
 	}
 
 #define CUBE_TYPE_WRAPPER2(func, type) \
-	PG_FUNCTION_INFO_V1( _## type ##_## func ); \
-	Datum		_## type ##_## func (PG_FUNCTION_ARGS); \
-	Datum \
-	_## type ##_## func (PG_FUNCTION_ARGS) \
+	PG_FUNCTION_INFO_V1( func ##_## type ); \
+	Datum func ##_## type (PG_FUNCTION_ARGS); \
+	Datum func ##_## type (PG_FUNCTION_ARGS)  \
 	{ \
-		Datum		arg1 = PG_GETARG_DATUM(0); \
-		Datum		arg2 = PG_GETARG_DATUM(1); \
-		NDBOX	   *result; \
-		result = DatumGetNDBOX(DirectFunctionCall2(func, arg1, arg2)); \
-		SET_TYPE(result, CUBE_ ## type); \
-		PG_RETURN_NDBOX(result); \
+		Datum	arg1 = PG_GETARG_DATUM(0); \
+		Datum	arg2 = PG_GETARG_DATUM(1); \
+		PG_RETURN_NDBOX(func(arg1, arg2, CUBE_##type)); \
 	}
-
-/*
-#define CUBE_OUT_WRAPPER(type) \
-	PG_FUNCTION_INFO_V1( _## type ##_## cube_out ); \
-	Datum		_## type ##_## cube_out (PG_FUNCTION_ARGS); \
-	Datum \
-	_## type ##_## cube_out (PG_FUNCTION_ARGS) \
-	{ \
-		PG_RETURN_CSTRING( \
-			DatumGetCString( \
-				DirectFunctionCall1(cube_out, PG_GETARG_DATUM(0)))); \
-	}
-*/
-
-
-
-
 

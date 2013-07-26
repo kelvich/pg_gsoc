@@ -34,15 +34,12 @@ extern void cube_scanner_finish(void);
 /*
 ** Input/Output routines
 */
+
 PG_FUNCTION_INFO_V1(cube_in);
 PG_FUNCTION_INFO_V1(cube_type_in);
 PG_FUNCTION_INFO_V1(cube_type_out);
 PG_FUNCTION_INFO_V1(cube);
-PG_FUNCTION_INFO_V1(cube_a_f8_f8);
-PG_FUNCTION_INFO_V1(cube_a_f8);
 PG_FUNCTION_INFO_V1(cube_out);
-PG_FUNCTION_INFO_V1(cube_f8);
-PG_FUNCTION_INFO_V1(cube_f8_f8);
 PG_FUNCTION_INFO_V1(cube_c_f8);
 PG_FUNCTION_INFO_V1(cube_c_f8_f8);
 PG_FUNCTION_INFO_V1(cube_dim);
@@ -55,11 +52,7 @@ Datum		cube_in(PG_FUNCTION_ARGS);
 Datum		cube_type_in(PG_FUNCTION_ARGS);
 Datum		cube_type_out(PG_FUNCTION_ARGS);
 Datum		cube(PG_FUNCTION_ARGS);
-Datum		cube_a_f8_f8(PG_FUNCTION_ARGS);
-Datum		cube_a_f8(PG_FUNCTION_ARGS);
 Datum		cube_out(PG_FUNCTION_ARGS);
-Datum		cube_f8(PG_FUNCTION_ARGS);
-Datum		cube_f8_f8(PG_FUNCTION_ARGS);
 Datum		cube_c_f8(PG_FUNCTION_ARGS);
 Datum		cube_c_f8_f8(PG_FUNCTION_ARGS);
 Datum		cube_dim(PG_FUNCTION_ARGS);
@@ -71,34 +64,36 @@ Datum		cube_sort_by(PG_FUNCTION_ARGS);
 /*
  * Input/Output for typed cubes
  */
-// CUBE_TYPE_WRAPPER1(cube_in, FLOAT4);
-CUBE_TYPE_WRAPPER1(cube_a_f8, FLOAT4);
-CUBE_TYPE_WRAPPER1(cube_f8, FLOAT4);
-CUBE_TYPE_WRAPPER2(cube_a_f8_f8, FLOAT4);
-CUBE_TYPE_WRAPPER2(cube_f8_f8, FLOAT4);
-// CUBE_OUT_WRAPPER(FLOAT4);
 
-// CUBE_TYPE_WRAPPER1(cube_in, INT4);
-CUBE_TYPE_WRAPPER1(cube_a_f8, INT4);
-CUBE_TYPE_WRAPPER1(cube_f8, INT4);
-CUBE_TYPE_WRAPPER2(cube_a_f8_f8, INT4);
-CUBE_TYPE_WRAPPER2(cube_f8_f8, INT4);
-// CUBE_OUT_WRAPPER(INT4);
+NDBOX* cube_arr_arr(Datum ur_datum, Datum ll_datum, int type);
+NDBOX* cube_arr(Datum ur_datum, int type);
+NDBOX* cube_num(Datum x_datum, int type);
+NDBOX* cube_num_num(Datum x0_datum, Datum x1_datum, int type);
 
-// CUBE_TYPE_WRAPPER1(cube_in, INT2);
-CUBE_TYPE_WRAPPER1(cube_a_f8, INT2);
-CUBE_TYPE_WRAPPER1(cube_f8, INT2);
-CUBE_TYPE_WRAPPER2(cube_a_f8_f8, INT2);
-CUBE_TYPE_WRAPPER2(cube_f8_f8, INT2);
-// CUBE_OUT_WRAPPER(INT2);
+CUBE_TYPE_WRAPPER1(cube_arr, FLOAT8);
+CUBE_TYPE_WRAPPER1(cube_num, FLOAT8);
+CUBE_TYPE_WRAPPER2(cube_arr_arr, FLOAT8);
+CUBE_TYPE_WRAPPER2(cube_num_num, FLOAT8);
 
-// CUBE_TYPE_WRAPPER1(cube_in, INT1);
-CUBE_TYPE_WRAPPER1(cube_a_f8, INT1);
-CUBE_TYPE_WRAPPER1(cube_f8, INT1);
-CUBE_TYPE_WRAPPER2(cube_a_f8_f8, INT1);
-CUBE_TYPE_WRAPPER2(cube_f8_f8, INT1);
-// CUBE_OUT_WRAPPER(INT1);
+CUBE_TYPE_WRAPPER1(cube_arr, FLOAT4);
+CUBE_TYPE_WRAPPER1(cube_num, FLOAT4);
+CUBE_TYPE_WRAPPER2(cube_arr_arr, FLOAT4);
+CUBE_TYPE_WRAPPER2(cube_num_num, FLOAT4);
 
+CUBE_TYPE_WRAPPER1(cube_arr, INT4);
+CUBE_TYPE_WRAPPER1(cube_num, INT4);
+CUBE_TYPE_WRAPPER2(cube_arr_arr, INT4);
+CUBE_TYPE_WRAPPER2(cube_num_num, INT4);
+
+CUBE_TYPE_WRAPPER1(cube_arr, INT2);
+CUBE_TYPE_WRAPPER1(cube_num, INT2);
+CUBE_TYPE_WRAPPER2(cube_arr_arr, INT2);
+CUBE_TYPE_WRAPPER2(cube_num_num, INT2);
+
+CUBE_TYPE_WRAPPER1(cube_arr, INT1);
+CUBE_TYPE_WRAPPER1(cube_num, INT1);
+CUBE_TYPE_WRAPPER2(cube_arr_arr, INT1);
+CUBE_TYPE_WRAPPER2(cube_num_num, INT1);
 
 /*
 ** GiST support methods
@@ -171,6 +166,8 @@ Datum		cube_enlarge(PG_FUNCTION_ARGS);
 /*
 ** For internal use only
 */
+double		get_coord(NDBOX *cube, int i);
+void		set_coord(NDBOX *cube, int i, double value);
 int32		cube_cmp_v0(NDBOX *a, NDBOX *b);
 bool		cube_contains_v0(NDBOX *a, NDBOX *b);
 bool		cube_overlap_v0(NDBOX *a, NDBOX *b);
@@ -186,13 +183,7 @@ float8		cube_sort_by_v0(NDBOX *cube, int d);
 */
 static double distance_1D(double a1, double a2, double b1, double b2);
 
-
-
-
-double get_coord(NDBOX *cube, int i);
-void set_coord(NDBOX *cube, int i, double value);
-
-// можно попробовать полагаться на сишную типизацию
+// надо попробовать полагаться на сишную типизацию
 // и перегружать функции
 double get_coord(NDBOX *cube, int i){
 	switch (TYPE(cube))
@@ -214,9 +205,6 @@ double get_coord(NDBOX *cube, int i){
 void set_coord(NDBOX *cube, int i, double value){
 	switch (TYPE(cube))
 	{
-		case CUBE_FLOAT8:
-			cube->coord_f8[i] = value;
-			break;
 		case CUBE_FLOAT4:
 			cube->coord_f4[i] = value;
 			break;
@@ -228,6 +216,10 @@ void set_coord(NDBOX *cube, int i, double value){
 			break;
 		case CUBE_INT1:
 			cube->coord_i1[i] = value;
+			break;
+		case CUBE_FLOAT8:
+		default:
+			cube->coord_f8[i] = value;
 			break;
 	}
 }
@@ -243,13 +235,7 @@ Datum
 cube_in(PG_FUNCTION_ARGS)
 {
 	char	   *str = PG_GETARG_CSTRING(0);
-	int			typmod = PG_GETARG_INT32(2);
 	void	   *result;
-
-	printf("cube_in: \n");
-	printf("\t%i\n",typmod);
-	// malloc(123413412341243);
-	// 4 / 0;
 
 	cube_scanner_init(str);
 
@@ -261,48 +247,14 @@ cube_in(PG_FUNCTION_ARGS)
 	PG_RETURN_NDBOX(result);
 }
 
-
-
-Datum
-cube_type_in(PG_FUNCTION_ARGS)
-{
-	ArrayType  *args = PG_GETARG_ARRAYTYPE_P(0);
-	char 	*arglist;
-
-	arglist = (char *) ARR_DATA_PTR(args);
-
-	printf("cube_type_in: \n");
-	printf("\t%i \n", ARRNELEMS(args));
-	printf("\t%s \n", arglist);
-
-	PG_RETURN_INT32(4242);
-	// return a;
-}
-
-
-Datum
-cube_type_out(PG_FUNCTION_ARGS)
-{
-	// ArrayType  *args = PG_GETARG_ARRAYTYPE_P(0);
-	// char 	*arglist;
-
-	// arglist = (char *) ARR_DATA_PTR(args);
-
-	// printf("%i \n", ARRNELEMS(args));
-	// printf("%s \n", arglist);
-
-	PG_RETURN_CSTRING("hohoho");
-	// return a;
-}
-
 /*
 ** Allows the construction of a cube from 2 float[]'s
 */
-Datum
-cube_a_f8_f8(PG_FUNCTION_ARGS)
+NDBOX*
+cube_arr_arr(Datum ur_datum, Datum ll_datum, int type)
 {
-	ArrayType  *ur = PG_GETARG_ARRAYTYPE_P(0);
-	ArrayType  *ll = PG_GETARG_ARRAYTYPE_P(1);
+	ArrayType  *ur = DatumGetArrayTypeP(ur_datum);
+	ArrayType  *ll = DatumGetArrayTypeP(ll_datum);
 	NDBOX	   *result;
 	int			i;
 	int			dim;
@@ -329,6 +281,7 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
 	SET_DIM(result, dim);
+	SET_TYPE(result, type);
 
 	for (i = 0; i < dim; i++)
 	{
@@ -346,21 +299,19 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 		SET_POINT_BIT(result);
 	}
 
-	PG_RETURN_NDBOX(result);
+	return result;
 }
 
 
 /*
 ** Allows the construction of a zero-volume cube from a float[]
 */
-Datum
-cube_a_f8(PG_FUNCTION_ARGS)
+NDBOX*
+cube_arr(Datum ur_datum, int type)
 {
-	ArrayType  *ur = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType  *ur = DatumGetArrayTypeP(ur_datum);
 	NDBOX	   *result;
-	int			i;
-	int			dim;
-	int			size;
+	int			i, dim, size;
 	double	   *dur;
 
 	if (array_contains_nulls(ur))
@@ -375,19 +326,69 @@ cube_a_f8(PG_FUNCTION_ARGS)
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
 	SET_DIM(result, dim);
+	SET_TYPE(result, type);
 	SET_POINT_BIT(result);
 
-	printf("cube_a_f8\n");
+	printf("cube_arr\n");
+	printf("type: %i \n", TYPE(result));
 	for (i = 0; i < dim; i++)
-	{
-		printf("el = %f \n", dur[i]);
 		set_coord(result, i, dur[i]);
-	}
-		
 
-	PG_RETURN_NDBOX(result);
+	return result;
 }
 
+/* Create a one dimensional box with identical upper and lower coordinates */
+NDBOX*
+cube_num(Datum x_datum, int type)
+{
+	double		x = DatumGetFloat8(x_datum);
+	NDBOX	   *result;
+	int			size;
+
+	size = POINT_SIZE(1);
+	result = (NDBOX *) palloc0(size);
+	SET_VARSIZE(result, size);
+	SET_DIM(result, 1);
+	SET_TYPE(result, type);
+	SET_POINT_BIT(result);
+
+	set_coord(result, 0, x);
+
+	return result;
+}
+
+/* Create a one dimensional box */
+NDBOX*
+cube_num_num(Datum x0_datum, Datum x1_datum, int type)
+{
+	double		x0 = DatumGetFloat8(x0_datum);
+	double		x1 = DatumGetFloat8(x1_datum);
+	NDBOX		*result;
+	int			size;
+
+	if (x0 == x1)
+	{
+		size = POINT_SIZE(1);
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		SET_DIM(result, 1);
+		SET_TYPE(result, type);
+		SET_POINT_BIT(result);
+		set_coord(result, 0, x0);
+	}
+	else
+	{
+		size = CUBE_SIZE(1);
+		result = (NDBOX *) palloc0(size);
+		SET_VARSIZE(result, size);
+		SET_DIM(result, 1);
+		SET_TYPE(result, type);
+		set_coord(result, 0, x0);
+		set_coord(result, 1, x1);
+	}
+
+	return result;
+}
 
 Datum
 cube_subset(PG_FUNCTION_ARGS)
@@ -574,57 +575,11 @@ g_cube_compress(PG_FUNCTION_ARGS)
 	GISTENTRY			*entry = (GISTENTRY *) PG_GETARG_POINTER(0);
 	GISTENTRY			*retval;
 	NDBOX 				*cube = DatumGetNDBOX(PG_DETOAST_DATUM(entry->key));
-	COMPRESSED_NDBOX 	*compressed_cube;
-	int					i, mult, size;
 
 	retval = palloc(sizeof(GISTENTRY));
-	mult = (!IS_POINT(cube)) + 1;
-
-	switch (TYPE(cube))
-	{
-		// case CUBE_FLOAT4:
-		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(float);
-		// 	compressed_cube = palloc0(size);
-		// 	for(i=0; i<mult*DIM(cube); i++)
-		// 		compressed_cube->coord_f4[i] = cube->x[i];
-		// 	break;
-
-		// case CUBE_INT4:
-		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(int);
-		// 	compressed_cube = palloc0(size);
-		// 	for(i=0; i<mult*DIM(cube); i++)
-		// 		compressed_cube->coord_i4[i] = cube->x[i];
-		// 	break;
-
-		// case CUBE_INT2:
-		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube)*sizeof(short);
-		// 	compressed_cube = palloc0(size);
-		// 	for(i=0; i<mult*DIM(cube); i++)
-		// 		compressed_cube->coord_i2[i] = cube->x[i];
-		// 	break;
-
-		// case CUBE_INT1:
-		// 	size = offsetof(COMPRESSED_NDBOX, coord_i1[0]) + mult*DIM(cube);
-		// 	compressed_cube = palloc0(size);
-		// 	for(i=0; i<mult*DIM(cube); i++){
-		// 		compressed_cube->coord_i1[i] = cube->x[i];
-		// 	}
-		// 	break;
-
-		default:
-			gistentryinit(*retval, PointerGetDatum(cube),
-				entry->rel, entry->page, entry->offset, FALSE);
-			PG_RETURN_POINTER(retval);
-	}
-
-	SET_VARSIZE(compressed_cube, size);
-	// compressed_cube->dim = DIM(cube);
-	compressed_cube->type = TYPE(cube);
-	compressed_cube->point = IS_POINT(cube);
-
-	gistentryinit(*retval, PointerGetDatum(compressed_cube),
-				entry->rel, entry->page, entry->offset, FALSE);
-	PG_RETURN_POINTER(retval);	
+	gistentryinit(*retval, PointerGetDatum(cube),
+					entry->rel, entry->page, entry->offset, FALSE);
+	PG_RETURN_POINTER(retval);
 }
 
 Datum
@@ -637,7 +592,6 @@ g_cube_decompress(PG_FUNCTION_ARGS)
 	retval = palloc(sizeof(GISTENTRY));
 	gistentryinit(*retval, PointerGetDatum(cube),
 				entry->rel, entry->page, entry->offset, FALSE);
-
 	PG_RETURN_POINTER(retval);
 }
 
@@ -1642,58 +1596,6 @@ cube_enlarge(PG_FUNCTION_ARGS)
 	}
 
 	PG_FREE_IF_COPY(a, 0);
-	PG_RETURN_NDBOX(result);
-}
-
-
-/* Create a one dimensional box with identical upper and lower coordinates */
-Datum
-cube_f8(PG_FUNCTION_ARGS)
-{
-	double		x = PG_GETARG_FLOAT8(0);
-	NDBOX	   *result;
-	int			size;
-
-	size = POINT_SIZE(1);
-	result = (NDBOX *) palloc0(size);
-	SET_VARSIZE(result, size);
-	SET_DIM(result, 1);
-	SET_POINT_BIT(result);
-
-	set_coord(result, 0, x);
-
-	PG_RETURN_NDBOX(result);
-}
-
-
-/* Create a one dimensional box */
-Datum
-cube_f8_f8(PG_FUNCTION_ARGS)
-{
-	double		x0 = PG_GETARG_FLOAT8(0);
-	double		x1 = PG_GETARG_FLOAT8(1);
-	NDBOX		*result;
-	int			size;
-
-	if (x0 == x1)
-	{
-		size = POINT_SIZE(1);
-		result = (NDBOX *) palloc0(size);
-		SET_VARSIZE(result, size);
-		SET_DIM(result, 1);
-		SET_POINT_BIT(result);
-		set_coord(result, 0, x0);
-	}
-	else
-	{
-		size = CUBE_SIZE(1);
-		result = (NDBOX *) palloc0(size);
-		SET_VARSIZE(result, size);
-		SET_DIM(result, 1);
-		set_coord(result, 0, x0);
-		set_coord(result, 1, x1);
-	}
-
 	PG_RETURN_NDBOX(result);
 }
 
