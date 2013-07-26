@@ -45,8 +45,7 @@ enum cube_types
 	CUBE_FLOAT4,
 	CUBE_INT4,
 	CUBE_INT2,
-	CUBE_INT1,
-	CUBE_VARINT
+	CUBE_INT1
 };
 
 
