@@ -1,7 +1,7 @@
 /* contrib/cube/cubedata.h */
 
 
-/* Bigger dimensions requires different memory allocation procedure */
+/* Bigger dimensions count requires different memory allocation procedure */
 #define CUBE_MAX_DIM (100)
 
 
@@ -26,18 +26,18 @@ typedef struct NDBOX
 	unsigned int header;
 	union
 	{
-		double	coord_f8[1];
-		float 	coord_f4[1];
-		int 	coord_i4[1];
-		short 	coord_i2[1];
-		char	coord_i1[1];
+		double			coord_f8[1];
+		float			coord_f4[1];
+		signed int		coord_i4[1];
+		signed short	coord_i2[1];
+		signed char		coord_i1[1];
 	};
 } NDBOX;
 
 
 /*
  * Types ordered from bigger size to lower.
- * New cubes created from two existing get type = min(type1, type2)
+ * New cubes created from two existing with type = min(type1, type2)
  */
 enum cube_types 
 {

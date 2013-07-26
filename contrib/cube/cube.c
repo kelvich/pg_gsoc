@@ -162,6 +162,7 @@ Datum		cube_enlarge(PG_FUNCTION_ARGS);
 /*
 ** For internal use only
 */
+void		check_coord(double num, int type);
 int32		cube_cmp_v0(NDBOX *a, NDBOX *b);
 bool		cube_contains_v0(NDBOX *a, NDBOX *b);
 bool		cube_overlap_v0(NDBOX *a, NDBOX *b);
@@ -269,6 +270,34 @@ void cube_to_point(NDBOX *cube)
 	SET_POINT_BIT(cube);
 }
 
+void check_coord(double num, int type)
+{
+	switch (type)
+	{
+		case CUBE_INT4:
+			if ((num < INT_MIN) || (num > INT_MAX))
+				ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("Cube coordinate out of requested type range"),
+					 errdetail("Value (%i) out of signed int4 type", (int)num)));
+			break;
+		case CUBE_INT2:
+			if ((num < SHRT_MIN) || (num > SHRT_MAX))
+				ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("Cube coordinate out of requested type range"),
+					 errdetail("Value (%i) out of signed int2 type", (int)num)));
+			break;
+		case CUBE_INT1:
+			if ( (num < SCHAR_MIN) || (num > SCHAR_MAX))
+				ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("Cube coordinate out of requested type range"),
+					 errdetail("Value (%i) out of signed int1 type", (int)num)));
+			break;
+	}
+}
+
 
 /*****************************************************************************
  * Input/Output functions
@@ -322,7 +351,9 @@ cube_arr_arr(Datum ur_datum, Datum ll_datum, int type)
 
 	for (i = 0; i < dim; i++)
 	{
+		check_coord(dur[i], type);
 		set_coord(result, i, dur[i]);
+		check_coord(dll[i], type);
 		set_coord(result, i+dim, dll[i]);
 		if (dur[i] != dll[i])
 			point = false;
@@ -356,8 +387,10 @@ cube_arr(Datum ur_datum, int type)
 
 	result = init_cube(dim, 1, type);
 
-	for (i = 0; i < dim; i++)
+	for (i = 0; i < dim; i++){
+		check_coord(dur[i], type);
 		set_coord(result, i, dur[i]);
+	}
 
 	return result;
 }
@@ -370,6 +403,7 @@ cube_num(Datum x_datum, int type)
 	NDBOX	   *result;
 
 	result = init_cube(1, 1, type);
+	check_coord(x, type);
 	set_coord(result, 0, x);
 
 	return result;
@@ -386,12 +420,15 @@ cube_num_num(Datum x0_datum, Datum x1_datum, int type)
 	if (x0 == x1)
 	{
 		result = init_cube(1, 1, type);
+		check_coord(x0, type);
 		set_coord(result, 0, x0);
 	}
 	else
 	{
 		result = init_cube(1, 0, type);
+		check_coord(x0, type);
 		set_coord(result, 0, x0);
+		check_coord(x1, type);
 		set_coord(result, 1, x1);
 	}
 

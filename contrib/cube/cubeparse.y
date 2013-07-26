@@ -206,6 +206,7 @@ write_box(int dim, char *str1, char *str2, char *typestr)
 	NDBOX	   *bp;
 	char	   *s;
 	int			i, type;
+	double		x;
 	bool		point = true;
 
 	if (strcmp(typestr, ":f4") == 0)
@@ -222,19 +223,27 @@ write_box(int dim, char *str1, char *str2, char *typestr)
 	bp = init_cube(dim, 0, type);
 
 	s = str1;
-	set_coord(bp, i=0, strtod(s, NULL));
+	x = strtod(s, NULL);
+	check_coord(x, type);
+	set_coord(bp, i=0, x);
 	while ((s = strchr(s, ',')) != NULL)
 	{
 		s++; i++;
-		set_coord(bp, i, strtod(s, NULL));
+		x = strtod(s, NULL);
+		check_coord(x, type);
+		set_coord(bp, i, x);
 	}
 
 	s = str2;
-	set_coord(bp, i=dim, strtod(s, NULL));
+	x = strtod(s, NULL);
+	check_coord(x, type);
+	set_coord(bp, i=dim, x);
 	while ((s = strchr(s, ',')) != NULL)
 	{
 		s++; i++;
-		set_coord(bp, i, strtod(s, NULL));
+		x = strtod(s, NULL);
+		check_coord(x, type);
+		set_coord(bp, i, x);
 		if (LL_COORD(bp, i-dim) != UR_COORD(bp, i-dim))
 			point = false;
 	}
@@ -271,11 +280,13 @@ write_point_as_box(char *str, int dim, char *typestr)
 
 	i = 0;
 	x = strtod(s, NULL);
+	check_coord(x, type);
 	set_coord(bp, 0, x);
 	while ((s = strchr(s, ',')) != NULL)
 	{
 		s++; i++;
 		x = strtod(s, NULL);
+		check_coord(x, type);
 		set_coord(bp, i, x);
 	}
 
