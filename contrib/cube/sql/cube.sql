@@ -166,6 +166,46 @@ SELECT cube_f4(1);
 SELECT cube_f4(3, 4);
 SELECT cube_f4(3, 3);
 
+SELECT '[(3, 4),(5,6)]'::cube;
+SELECT '[(3, 4),(3,4)]'::cube;
+SELECT '(3, 4),(5,6)'::cube;
+SELECT '(3, 4),(3,4)'::cube;
+SELECT '(3, 4)'::cube;
+SELECT '3, 4'::cube;
+SELECT '3'::cube;
+
+SELECT '[(3, 4),(5,6)]:f4'::cube;
+SELECT '[(3, 4),(3,4)]:f4'::cube;
+SELECT '(3, 4),(5,6):f4'::cube;
+SELECT '(3, 4),(3,4):f4'::cube;
+SELECT '(3, 4):f4'::cube;
+SELECT '3, 4:f4'::cube;
+SELECT '3:f4'::cube;
+
+SELECT '[(3, 4),(5,6)]:i4'::cube;
+SELECT '[(3, 4),(3,4)]:i4'::cube;
+SELECT '(3, 4),(5,6):i4'::cube;
+SELECT '(3, 4),(3,4):i4'::cube;
+SELECT '(3, 4):i4'::cube;
+SELECT '3, 4:i4'::cube;
+SELECT '3:i4'::cube;
+
+SELECT '[(3, 4),(5,6)]:i2'::cube;
+SELECT '[(3, 4),(3,4)]:i2'::cube;
+SELECT '(3, 4),(5,6):i2'::cube;
+SELECT '(3, 4),(3,4):i2'::cube;
+SELECT '(3, 4):i2'::cube;
+SELECT '3, 4:i2'::cube;
+SELECT '3:i2'::cube;
+
+SELECT '[(3, 4),(5,6)]:i1'::cube;
+SELECT '[(3, 4),(3,4)]:i1'::cube;
+SELECT '(3, 4),(5,6):i1'::cube;
+SELECT '(3, 4),(3,4):i1'::cube;
+SELECT '(3, 4):i1'::cube;
+SELECT '3, 4:i1'::cube;
+SELECT '3:i1'::cube;
+
 --
 -- Testing limit of CUBE_MAX_DIM dimensions check in cube_in.
 --

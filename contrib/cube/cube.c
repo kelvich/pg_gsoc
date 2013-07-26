@@ -488,6 +488,27 @@ cube_out(PG_FUNCTION_ARGS)
 		appendStringInfoChar(&buf, ')');
 	}
 
+	/*
+	 * print type unless it is float8
+	 */
+	printf("out: type: %i\n", TYPE(cube));
+
+	switch (TYPE(cube))
+	{
+		case CUBE_FLOAT4:
+			appendStringInfo(&buf, ":f4");
+			break;
+		case CUBE_INT4:
+			appendStringInfo(&buf, ":i4");
+			break;
+		case CUBE_INT2:
+			appendStringInfo(&buf, ":i2");
+			break;
+		case CUBE_INT1:
+			appendStringInfo(&buf, ":i1");
+			break;
+	}
+
 	PG_FREE_IF_COPY(cube, 0);
 	PG_RETURN_CSTRING(buf.data);
 }

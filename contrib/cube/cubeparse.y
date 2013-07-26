@@ -9,9 +9,7 @@
 #define YYDEBUG 1
 
 #include "postgres.h"
-
 #include "cubedata.h"
-
 
 extern double get_coord(NDBOX *cube, int i);
 extern void set_coord(NDBOX *cube, int i, double value);
@@ -39,7 +37,7 @@ static int delim_count(char *s, char delim);
 static int check_dim(char *str1, char *str2);
 static bool check_maxdim(int dim, char *str1);
 static NDBOX * write_box(int dim, char *str1, char *str2, char *typestr);
-static NDBOX * write_point_as_box(char *s, int dim);
+static NDBOX * write_point_as_box(char *s, int dim, char *typestr);
 
 %}
 
@@ -55,7 +53,7 @@ static NDBOX * write_point_as_box(char *s, int dim);
 box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	{
 		int dim;
-
+		printf("BpCpB\n");
 		if ( (dim = check_dim($2, $4)) && check_maxdim(dim, $2) )
 			*((void **)result) = write_box(dim, $2, $4, "");
 		else
@@ -65,9 +63,9 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	| O_BRACKET paren_list COMMA paren_list C_BRACKET TYPMOD
 	{
 		int dim;
-
+		printf("BpCpBT\n");
 		if ( (dim = check_dim($2, $4)) && check_maxdim(dim, $2) )
-			*((void **)result) = write_box(dim, $2, $4, $5);
+			*((void **)result) = write_box(dim, $2, $4, $6);
 		else
 			YYABORT;
 	}
@@ -75,7 +73,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	| paren_list COMMA paren_list
 	{
 		int dim;
-
+		printf("pCp\n");
 		if ( (dim = check_dim($1, $3)) && check_maxdim(dim, $1) )
 			*((void **)result) = write_box(dim, $1, $3, "");
 		else
@@ -85,9 +83,9 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 	| paren_list COMMA paren_list TYPMOD
 	{
 		int dim;
-
+		printf("pCpT\n");
 		if ( (dim = check_dim($1, $3)) && check_maxdim(dim, $1) )
-			*((void **)result) = write_box(dim, $1, $3, "");
+			*((void **)result) = write_box(dim, $1, $3, $4);
 		else
 			YYABORT;
 	}
@@ -100,7 +98,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 		if (!check_maxdim(dim, $1))
 			YYABORT;
 
-		*((void **)result) = write_point_as_box($1, dim);
+		*((void **)result) = write_point_as_box($1, dim, "");
 	}
 
 	| paren_list TYPMOD
@@ -111,7 +109,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 		if (!check_maxdim(dim, $1))
 			YYABORT;
 
-		*((void **)result) = write_point_as_box($1, dim);
+		*((void **)result) = write_point_as_box($1, dim, $2);
 	}
 
 	| list
@@ -122,7 +120,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 		if (!check_maxdim(dim, $1))
 			YYABORT;
 
-		*((void **)result) = write_point_as_box($1, dim);
+		*((void **)result) = write_point_as_box($1, dim, "");
 	}
 
 	| list TYPMOD
@@ -133,7 +131,7 @@ box: O_BRACKET paren_list COMMA paren_list C_BRACKET
 		if (!check_maxdim(dim, $1))
 			YYABORT;
 
-		*((void **)result) = write_point_as_box($1, dim);
+		*((void **)result) = write_point_as_box($1, dim, $2);
 	}
 	;
 
@@ -209,14 +207,28 @@ write_box(int dim, char *str1, char *str2, char *typestr)
 {
 	NDBOX	   *bp;
 	char	   *s;
-	int			i;
-	int			size;
+	int			i, size, type;
 	bool		point = true;
+
+	if (strcmp(typestr, ":f4") == 0)
+		type = CUBE_FLOAT4;
+	else if (strcmp(typestr, ":i4") == 0)
+		type = CUBE_INT4;
+	else if (strcmp(typestr, ":i2") == 0)
+		type = CUBE_INT2;
+	else if (strcmp(typestr, ":i1") == 0)
+		type = CUBE_INT1;
+	else
+		type = CUBE_FLOAT8;
+
+	printf("typestr: '%s'\n", typestr);
+	printf("type: %i\n", type);
 
 	size = CUBE_SIZE(dim);
 	bp = palloc0(size);
 	SET_VARSIZE(bp, size);
 	SET_DIM(bp, dim);
+	SET_TYPE(bp, type);
 
 	s = str1;
 	set_coord(bp, i=0, strtod(s, NULL));
@@ -251,18 +263,29 @@ write_box(int dim, char *str1, char *str2, char *typestr)
 }
 
 static NDBOX *
-write_point_as_box(char *str, int dim)
+write_point_as_box(char *str, int dim, char *typestr)
 {
 	NDBOX		*bp;
-	int			i,
-				size;
+	int			i, size, type;
 	double		x;
 	char		*s = str;
+
+	if (strcmp(typestr, ":f4") == 0)
+		type = CUBE_FLOAT4;
+	else if (strcmp(typestr, ":i4") == 0)
+		type = CUBE_INT4;
+	else if (strcmp(typestr, ":i2") == 0)
+		type = CUBE_INT2;
+	else if (strcmp(typestr, ":i1") == 0)
+		type = CUBE_INT1;
+	else
+		type = CUBE_FLOAT8;
 
 	size = POINT_SIZE(dim);
 	bp = palloc0(size);
 	SET_VARSIZE(bp, size);
 	SET_DIM(bp, dim);
+	SET_TYPE(bp, type);
 	SET_POINT_BIT(bp);
 
 	i = 0;

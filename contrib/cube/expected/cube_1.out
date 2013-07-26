@@ -558,169 +558,379 @@ SELECT cube(cube(1,2), 42, 24); -- cube_c_f8_f8
 SELECT cube_i1(array[1.0]);
  cube_i1 
 ---------
- (1)
+ (1):i1
 (1 row)
 
 SELECT cube_i1(array[1,12,3,4]);
-    cube_i1    
----------------
- (1, 12, 3, 4)
+     cube_i1      
+------------------
+ (1, 12, 3, 4):i1
 (1 row)
 
 SELECT cube_i1(array[1],array[1]);
  cube_i1 
 ---------
- (1)
+ (1):i1
 (1 row)
 
 SELECT cube_i1(array[1,12,3,4], array[1,42,3,4]);
-           cube_i1           
------------------------------
- (1, 12, 3, 4),(1, 42, 3, 4)
+            cube_i1             
+--------------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4):i1
 (1 row)
 
 SELECT cube_i1(1);
  cube_i1 
 ---------
- (1)
+ (1):i1
 (1 row)
 
 SELECT cube_i1(3, 4);
- cube_i1 
----------
- (3),(4)
+  cube_i1   
+------------
+ (3),(4):i1
 (1 row)
 
 SELECT cube_i1(3, 3);
  cube_i1 
 ---------
- (3)
+ (3):i1
 (1 row)
 
 SELECT cube_i2(array[1.0]);
  cube_i2 
 ---------
- (1)
+ (1):i2
 (1 row)
 
 SELECT cube_i2(array[1,12,3,4]);
-    cube_i2    
----------------
- (1, 12, 3, 4)
+     cube_i2      
+------------------
+ (1, 12, 3, 4):i2
 (1 row)
 
 SELECT cube_i2(array[1],array[1]);
  cube_i2 
 ---------
- (1)
+ (1):i2
 (1 row)
 
 SELECT cube_i2(array[1,12,3,4], array[1,42,3,4]);
-           cube_i2           
------------------------------
- (1, 12, 3, 4),(1, 42, 3, 4)
+            cube_i2             
+--------------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4):i2
 (1 row)
 
 SELECT cube_i2(1);
  cube_i2 
 ---------
- (1)
+ (1):i2
 (1 row)
 
 SELECT cube_i2(3, 4);
- cube_i2 
----------
- (3),(4)
+  cube_i2   
+------------
+ (3),(4):i2
 (1 row)
 
 SELECT cube_i2(3, 3);
  cube_i2 
 ---------
- (3)
+ (3):i2
 (1 row)
 
 SELECT cube_i4(array[1.0]);
  cube_i4 
 ---------
- (1)
+ (1):i4
 (1 row)
 
 SELECT cube_i4(array[1,12,3,4]);
-    cube_i4    
----------------
- (1, 12, 3, 4)
+     cube_i4      
+------------------
+ (1, 12, 3, 4):i4
 (1 row)
 
 SELECT cube_i4(array[1],array[1]);
  cube_i4 
 ---------
- (1)
+ (1):i4
 (1 row)
 
 SELECT cube_i4(array[1,12,3,4], array[1,42,3,4]);
-           cube_i4           
------------------------------
- (1, 12, 3, 4),(1, 42, 3, 4)
+            cube_i4             
+--------------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4):i4
 (1 row)
 
 SELECT cube_i4(1);
  cube_i4 
 ---------
- (1)
+ (1):i4
 (1 row)
 
 SELECT cube_i4(3, 4);
- cube_i4 
----------
- (3),(4)
+  cube_i4   
+------------
+ (3),(4):i4
 (1 row)
 
 SELECT cube_i4(3, 3);
  cube_i4 
 ---------
- (3)
+ (3):i4
 (1 row)
 
 SELECT cube_f4(array[1.0]);
  cube_f4 
 ---------
- (1)
+ (1):f4
 (1 row)
 
 SELECT cube_f4(array[1,12,3,4]);
-    cube_f4    
----------------
- (1, 12, 3, 4)
+     cube_f4      
+------------------
+ (1, 12, 3, 4):f4
 (1 row)
 
 SELECT cube_f4(array[1],array[1]);
  cube_f4 
 ---------
- (1)
+ (1):f4
 (1 row)
 
 SELECT cube_f4(array[1,12,3,4], array[1,42,3,4]);
-           cube_f4           
------------------------------
- (1, 12, 3, 4),(1, 42, 3, 4)
+            cube_f4             
+--------------------------------
+ (1, 12, 3, 4),(1, 42, 3, 4):f4
 (1 row)
 
 SELECT cube_f4(1);
  cube_f4 
 ---------
- (1)
+ (1):f4
 (1 row)
 
 SELECT cube_f4(3, 4);
- cube_f4 
----------
- (3),(4)
+  cube_f4   
+------------
+ (3),(4):f4
 (1 row)
 
 SELECT cube_f4(3, 3);
  cube_f4 
 ---------
+ (3):f4
+(1 row)
+
+SELECT '[(3, 4),(5,6)]'::cube;
+     cube      
+---------------
+ (3, 4),(5, 6)
+(1 row)
+
+SELECT '[(3, 4),(3,4)]'::cube;
+  cube  
+--------
+ (3, 4)
+(1 row)
+
+SELECT '(3, 4),(5,6)'::cube;
+     cube      
+---------------
+ (3, 4),(5, 6)
+(1 row)
+
+SELECT '(3, 4),(3,4)'::cube;
+  cube  
+--------
+ (3, 4)
+(1 row)
+
+SELECT '(3, 4)'::cube;
+  cube  
+--------
+ (3, 4)
+(1 row)
+
+SELECT '3, 4'::cube;
+  cube  
+--------
+ (3, 4)
+(1 row)
+
+SELECT '3'::cube;
+ cube 
+------
  (3)
+(1 row)
+
+SELECT '[(3, 4),(5,6)]:f4'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):f4
+(1 row)
+
+SELECT '[(3, 4),(3,4)]:f4'::cube;
+   cube    
+-----------
+ (3, 4):f4
+(1 row)
+
+SELECT '(3, 4),(5,6):f4'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):f4
+(1 row)
+
+SELECT '(3, 4),(3,4):f4'::cube;
+   cube    
+-----------
+ (3, 4):f4
+(1 row)
+
+SELECT '(3, 4):f4'::cube;
+   cube    
+-----------
+ (3, 4):f4
+(1 row)
+
+SELECT '3, 4:f4'::cube;
+   cube    
+-----------
+ (3, 4):f4
+(1 row)
+
+SELECT '3:f4'::cube;
+  cube  
+--------
+ (3):f4
+(1 row)
+
+SELECT '[(3, 4),(5,6)]:i4'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):i4
+(1 row)
+
+SELECT '[(3, 4),(3,4)]:i4'::cube;
+   cube    
+-----------
+ (3, 4):i4
+(1 row)
+
+SELECT '(3, 4),(5,6):i4'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):i4
+(1 row)
+
+SELECT '(3, 4),(3,4):i4'::cube;
+   cube    
+-----------
+ (3, 4):i4
+(1 row)
+
+SELECT '(3, 4):i4'::cube;
+   cube    
+-----------
+ (3, 4):i4
+(1 row)
+
+SELECT '3, 4:i4'::cube;
+   cube    
+-----------
+ (3, 4):i4
+(1 row)
+
+SELECT '3:i4'::cube;
+  cube  
+--------
+ (3):i4
+(1 row)
+
+SELECT '[(3, 4),(5,6)]:i2'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):i2
+(1 row)
+
+SELECT '[(3, 4),(3,4)]:i2'::cube;
+   cube    
+-----------
+ (3, 4):i2
+(1 row)
+
+SELECT '(3, 4),(5,6):i2'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):i2
+(1 row)
+
+SELECT '(3, 4),(3,4):i2'::cube;
+   cube    
+-----------
+ (3, 4):i2
+(1 row)
+
+SELECT '(3, 4):i2'::cube;
+   cube    
+-----------
+ (3, 4):i2
+(1 row)
+
+SELECT '3, 4:i2'::cube;
+   cube    
+-----------
+ (3, 4):i2
+(1 row)
+
+SELECT '3:i2'::cube;
+  cube  
+--------
+ (3):i2
+(1 row)
+
+SELECT '[(3, 4),(5,6)]:i1'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):i1
+(1 row)
+
+SELECT '[(3, 4),(3,4)]:i1'::cube;
+   cube    
+-----------
+ (3, 4):i1
+(1 row)
+
+SELECT '(3, 4),(5,6):i1'::cube;
+       cube       
+------------------
+ (3, 4),(5, 6):i1
+(1 row)
+
+SELECT '(3, 4),(3,4):i1'::cube;
+   cube    
+-----------
+ (3, 4):i1
+(1 row)
+
+SELECT '(3, 4):i1'::cube;
+   cube    
+-----------
+ (3, 4):i1
+(1 row)
+
+SELECT '3, 4:i1'::cube;
+   cube    
+-----------
+ (3, 4):i1
+(1 row)
+
+SELECT '3:i1'::cube;
+  cube  
+--------
+ (3):i1
 (1 row)
 
 --
