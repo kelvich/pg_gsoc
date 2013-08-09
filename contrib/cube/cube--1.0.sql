@@ -5,7 +5,7 @@
 
 -- Create the user-defined type for N-dimensional boxes
 
-CREATE FUNCTION cube_in(cstring)
+CREATE FUNCTION cube_in(cstring, oid, integer)
 RETURNS cube
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
@@ -15,12 +15,32 @@ RETURNS cstring
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION cube_type_in(cstring[])
+RETURNS integer
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+-- CREATE FUNCTION cube_type_out(integer)
+-- RETURNS cstring
+-- AS 'MODULE_PATHNAME'
+-- LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION cube(cube, integer, boolean)
+RETURNS cube
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
 CREATE TYPE cube (
 	INTERNALLENGTH = variable,
 	INPUT = cube_in,
 	OUTPUT = cube_out,
+	TYPMOD_IN = cube_type_in,
+	-- TYPMOD_OUT = cube_type_out,
 	ALIGNMENT = float
 );
+
+CREATE CAST (cube AS cube)
+    WITH FUNCTION cube(cube, integer, boolean);
 
 COMMENT ON TYPE cube IS 'multi-dimensional cube ''(FLOAT-1, FLOAT-2, ..., FLOAT-N), (FLOAT-1, FLOAT-2, ..., FLOAT-N)''';
 
