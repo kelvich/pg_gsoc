@@ -192,8 +192,8 @@ Datum cube(PG_FUNCTION_ARGS)
 	int			len = PG_GETARG_INT32(1);
 	bool		isExplicit = PG_GETARG_BOOL(2);
 
-	printf("cube: \n");
-	printf("cube: len= %i\n",len);
+	// printf("cube: \n");
+	// printf("cube: len= %i\n",len);
 
 
 	PG_RETURN_NDBOX(arg);
@@ -207,9 +207,9 @@ cube_type_in(PG_FUNCTION_ARGS)
 
 	arglist = (char *) ARR_DATA_PTR(args);
 
-	printf("cube_type_in: \n");
-	printf("\t%i \n", ARRNELEMS(args));
-	printf("\t%s \n", arglist);
+	// printf("cube_type_in: \n");
+	// printf("\t%i \n", ARRNELEMS(args));
+	// printf("\t%s \n", arglist);
 
 	PG_RETURN_INT32(13);
 }
@@ -362,7 +362,7 @@ cube_in(PG_FUNCTION_ARGS)
 	char	   *str = PG_GETARG_CSTRING(0);
 	void	   *result;
 
-	printf("cube_in for %s\n", str);
+	// printf("cube_in for %s\n", str);
 	cube_scanner_init(str);
 
 	if (cube_yyparse(&result) != 0)
