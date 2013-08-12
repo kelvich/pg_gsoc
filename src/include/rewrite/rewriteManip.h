@@ -4,7 +4,7 @@
  *		Querytree manipulation subroutines for query rewriter.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/rewrite/rewriteManip.h
@@ -35,7 +35,7 @@ typedef enum ReplaceVarsNoMatchOption
 {
 	REPLACEVARS_REPORT_ERROR,	/* throw error if no match */
 	REPLACEVARS_CHANGE_VARNO,	/* change the Var's varno, nothing else */
-	REPLACEVARS_SUBSTITUTE_NULL	/* replace with a NULL Const */
+	REPLACEVARS_SUBSTITUTE_NULL /* replace with a NULL Const */
 } ReplaceVarsNoMatchOption;
 
 

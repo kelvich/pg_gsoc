@@ -3,7 +3,7 @@
  * pg_operator.c
  *	  routines to support manipulation of the pg_operator relation
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -92,11 +92,11 @@ validOperatorName(const char *name)
 		return false;
 
 	/*
-	 * For SQL92 compatibility, '+' and '-' cannot be the last char of a
-	 * multi-char operator unless the operator contains chars that are not in
-	 * SQL92 operators. The idea is to lex '=-' as two operators, but not to
-	 * forbid operator names like '?-' that could not be sequences of SQL92
-	 * operators.
+	 * For SQL standard compatibility, '+' and '-' cannot be the last char of
+	 * a multi-char operator unless the operator contains chars that are not
+	 * in SQL operators. The idea is to lex '=-' as two operators, but not to
+	 * forbid operator names like '?-' that could not be sequences of standard
+	 * SQL operators.
 	 */
 	if (len > 1 &&
 		(name[len - 1] == '+' ||
@@ -275,8 +275,7 @@ OperatorShellMake(const char *operatorName,
 	heap_freetuple(tup);
 
 	/* Post creation hook for new shell operator */
-	InvokeObjectAccessHook(OAT_POST_CREATE,
-						   OperatorRelationId, operatorObjectId, 0, NULL);
+	InvokeObjectPostCreateHook(OperatorRelationId, operatorObjectId, 0);
 
 	/*
 	 * Make sure the tuple is visible for subsequent lookups/updates.
@@ -326,7 +325,7 @@ OperatorShellMake(const char *operatorName,
  * Forward declaration is used only for this purpose, it is
  * not available to the user as it is for type definition.
  */
-void
+Oid
 OperatorCreate(const char *operatorName,
 			   Oid operatorNamespace,
 			   Oid leftTypeId,
@@ -544,8 +543,7 @@ OperatorCreate(const char *operatorName,
 	makeOperatorDependencies(tup);
 
 	/* Post creation hook for new operator */
-	InvokeObjectAccessHook(OAT_POST_CREATE,
-						   OperatorRelationId, operatorObjectId, 0, NULL);
+	InvokeObjectPostCreateHook(OperatorRelationId, operatorObjectId, 0);
 
 	heap_close(pg_operator_desc, RowExclusiveLock);
 
@@ -565,6 +563,8 @@ OperatorCreate(const char *operatorName,
 
 	if (OidIsValid(commutatorId) || OidIsValid(negatorId))
 		OperatorUpd(operatorObjectId, commutatorId, negatorId);
+
+	return operatorObjectId;
 }
 
 /*

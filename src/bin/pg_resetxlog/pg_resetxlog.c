@@ -20,7 +20,7 @@
  * step 2 ...
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_resetxlog/pg_resetxlog.c
@@ -54,6 +54,7 @@
 #include "access/xlog_internal.h"
 #include "catalog/catversion.h"
 #include "catalog/pg_control.h"
+#include "common/fe_memutils.h"
 
 extern int	optind;
 extern char *optarg;
@@ -85,10 +86,12 @@ main(int argc, char *argv[])
 	TransactionId set_xid = 0;
 	Oid			set_oid = 0;
 	MultiXactId set_mxid = 0;
+	MultiXactId set_oldestmxid = 0;
 	MultiXactOffset set_mxoff = (MultiXactOffset) -1;
 	uint32		minXlogTli = 0;
 	XLogSegNo	minXlogSegNo = 0;
 	char	   *endptr;
+	char	   *endptr2;
 	char	   *DataDir;
 	int			fd;
 
@@ -170,7 +173,15 @@ main(int argc, char *argv[])
 
 			case 'm':
 				set_mxid = strtoul(optarg, &endptr, 0);
-				if (endptr == optarg || *endptr != '\0')
+				if (endptr == optarg || *endptr != ',')
+				{
+					fprintf(stderr, _("%s: invalid argument for option -m\n"), progname);
+					fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+					exit(1);
+				}
+
+				set_oldestmxid = strtoul(endptr + 1, &endptr2, 0);
+				if (endptr2 == endptr + 1 || *endptr2 != '\0')
 				{
 					fprintf(stderr, _("%s: invalid argument for option -m\n"), progname);
 					fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
@@ -179,6 +190,17 @@ main(int argc, char *argv[])
 				if (set_mxid == 0)
 				{
 					fprintf(stderr, _("%s: multitransaction ID (-m) must not be 0\n"), progname);
+					exit(1);
+				}
+
+				/*
+				 * XXX It'd be nice to have more sanity checks here, e.g. so
+				 * that oldest is not wrapped around w.r.t. nextMulti.
+				 */
+				if (set_oldestmxid == 0)
+				{
+					fprintf(stderr, _("%s: oldest multitransaction ID (-m) must not be 0\n"),
+							progname);
 					exit(1);
 				}
 				break;
@@ -307,13 +329,23 @@ main(int argc, char *argv[])
 		ControlFile.checkPointCopy.nextOid = set_oid;
 
 	if (set_mxid != 0)
+	{
 		ControlFile.checkPointCopy.nextMulti = set_mxid;
+
+		ControlFile.checkPointCopy.oldestMulti = set_oldestmxid;
+		if (ControlFile.checkPointCopy.oldestMulti < FirstMultiXactId)
+			ControlFile.checkPointCopy.oldestMulti += FirstMultiXactId;
+		ControlFile.checkPointCopy.oldestMultiDB = InvalidOid;
+	}
 
 	if (set_mxoff != -1)
 		ControlFile.checkPointCopy.nextMultiOffset = set_mxoff;
 
 	if (minXlogTli > ControlFile.checkPointCopy.ThisTimeLineID)
+	{
 		ControlFile.checkPointCopy.ThisTimeLineID = minXlogTli;
+		ControlFile.checkPointCopy.PrevTimeLineID = minXlogTli;
+	}
 
 	if (minXlogSegNo > newXlogSegNo)
 		newXlogSegNo = minXlogSegNo;
@@ -390,7 +422,7 @@ ReadControlFile(void)
 	}
 
 	/* Use malloc to ensure we have a maxaligned buffer */
-	buffer = (char *) malloc(PG_CONTROL_SIZE);
+	buffer = (char *) pg_malloc(PG_CONTROL_SIZE);
 
 	len = read(fd, buffer, PG_CONTROL_SIZE);
 	if (len < 0)
@@ -463,6 +495,7 @@ GuessControlValues(void)
 
 	ControlFile.checkPointCopy.redo = SizeOfXLogLongPHD;
 	ControlFile.checkPointCopy.ThisTimeLineID = 1;
+	ControlFile.checkPointCopy.PrevTimeLineID = 1;
 	ControlFile.checkPointCopy.fullPageWrites = false;
 	ControlFile.checkPointCopy.nextXidEpoch = 0;
 	ControlFile.checkPointCopy.nextXid = FirstNormalTransactionId;
@@ -471,17 +504,21 @@ GuessControlValues(void)
 	ControlFile.checkPointCopy.nextMultiOffset = 0;
 	ControlFile.checkPointCopy.oldestXid = FirstNormalTransactionId;
 	ControlFile.checkPointCopy.oldestXidDB = InvalidOid;
+	ControlFile.checkPointCopy.oldestMulti = FirstMultiXactId;
+	ControlFile.checkPointCopy.oldestMultiDB = InvalidOid;
 	ControlFile.checkPointCopy.time = (pg_time_t) time(NULL);
 	ControlFile.checkPointCopy.oldestActiveXid = InvalidTransactionId;
 
 	ControlFile.state = DB_SHUTDOWNED;
 	ControlFile.time = (pg_time_t) time(NULL);
 	ControlFile.checkPoint = ControlFile.checkPointCopy.redo;
+	ControlFile.unloggedLSN = 1;
 
 	/* minRecoveryPoint, backupStartPoint and backupEndPoint can be left zero */
 
 	ControlFile.wal_level = WAL_LEVEL_MINIMAL;
 	ControlFile.MaxConnections = 100;
+	ControlFile.max_worker_processes = 8;
 	ControlFile.max_prepared_xacts = 0;
 	ControlFile.max_locks_per_xact = 64;
 
@@ -562,6 +599,10 @@ PrintControlValues(bool guessed)
 		   ControlFile.checkPointCopy.oldestXidDB);
 	printf(_("Latest checkpoint's oldestActiveXID:  %u\n"),
 		   ControlFile.checkPointCopy.oldestActiveXid);
+	printf(_("Latest checkpoint's oldestMultiXid:   %u\n"),
+		   ControlFile.checkPointCopy.oldestMulti);
+	printf(_("Latest checkpoint's oldestMulti's DB: %u\n"),
+		   ControlFile.checkPointCopy.oldestMultiDB);
 	printf(_("Maximum data alignment:               %u\n"),
 		   ControlFile.maxAlign);
 	/* we don't print floatFormat since can't say much useful about it */
@@ -585,6 +626,8 @@ PrintControlValues(bool guessed)
 		   (ControlFile.float4ByVal ? _("by value") : _("by reference")));
 	printf(_("Float8 argument passing:              %s\n"),
 		   (ControlFile.float8ByVal ? _("by value") : _("by reference")));
+	printf(_("Data page checksum version:           %u\n"),
+		   ControlFile.data_checksum_version);
 }
 
 
@@ -622,6 +665,7 @@ RewriteControlFile(void)
 	 */
 	ControlFile.wal_level = WAL_LEVEL_MINIMAL;
 	ControlFile.MaxConnections = 100;
+	ControlFile.max_worker_processes = 8;
 	ControlFile.max_prepared_xacts = 0;
 	ControlFile.max_locks_per_xact = 64;
 
@@ -904,7 +948,7 @@ WriteEmptyXLOG(void)
 	int			nbytes;
 
 	/* Use malloc() to ensure buffer is MAXALIGNED */
-	buffer = (char *) malloc(XLOG_BLCKSZ);
+	buffer = (char *) pg_malloc(XLOG_BLCKSZ);
 	page = (XLogPageHeader) buffer;
 	memset(buffer, 0, XLOG_BLCKSZ);
 
@@ -993,8 +1037,8 @@ usage(void)
 	printf(_("Options:\n"));
 	printf(_("  -e XIDEPOCH      set next transaction ID epoch\n"));
 	printf(_("  -f               force update to be done\n"));
-	printf(_("  -l xlogfile      force minimum WAL starting location for new transaction log\n"));
-	printf(_("  -m XID           set next multitransaction ID\n"));
+	printf(_("  -l XLOGFILE      force minimum WAL starting location for new transaction log\n"));
+	printf(_("  -m MXID,MXID     set next and oldest multitransaction ID\n"));
 	printf(_("  -n               no update, just show extracted control values (for testing)\n"));
 	printf(_("  -o OID           set next OID\n"));
 	printf(_("  -O OFFSET        set next multitransaction offset\n"));

@@ -1,14 +1,14 @@
 /*-------------------------------------------------------------------------
  *
  * xactdesc.c
- *    rmgr descriptor routines for access/transam/xact.c
+ *	  rmgr descriptor routines for access/transam/xact.c
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
  * IDENTIFICATION
- *    src/backend/access/rmgrdesc/xactdesc.c
+ *	  src/backend/access/rmgrdesc/xactdesc.c
  *
  *-------------------------------------------------------------------------
  */
@@ -16,6 +16,7 @@
 
 #include "access/xact.h"
 #include "catalog/catalog.h"
+#include "common/relpath.h"
 #include "storage/sinval.h"
 #include "utils/timestamp.h"
 
@@ -68,11 +69,14 @@ xact_desc_commit(StringInfo buf, xl_xact_commit *xlrec)
 				appendStringInfo(buf, " catalog %u", msg->cat.catId);
 			else if (msg->id == SHAREDINVALRELCACHE_ID)
 				appendStringInfo(buf, " relcache %u", msg->rc.relId);
-			/* remaining cases not expected, but print something anyway */
+			/* not expected, but print something anyway */
 			else if (msg->id == SHAREDINVALSMGR_ID)
 				appendStringInfo(buf, " smgr");
+			/* not expected, but print something anyway */
 			else if (msg->id == SHAREDINVALRELMAP_ID)
 				appendStringInfo(buf, " relmap");
+			else if (msg->id == SHAREDINVALSNAPSHOT_ID)
+				appendStringInfo(buf, " snapshot %u", msg->sn.relId);
 			else
 				appendStringInfo(buf, " unknown id %d", msg->id);
 		}

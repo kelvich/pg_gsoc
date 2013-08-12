@@ -3,7 +3,7 @@
  * snapshot.h
  *	  POSTGRES snapshot definition
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/snapshot.h
@@ -27,8 +27,8 @@ typedef struct SnapshotData *Snapshot;
  * The specific semantics of a snapshot are encoded by the "satisfies"
  * function.
  */
-typedef bool (*SnapshotSatisfiesFunc) (HeapTupleHeader tuple,
-										   Snapshot snapshot, Buffer buffer);
+typedef bool (*SnapshotSatisfiesFunc) (HeapTuple htup,
+									   Snapshot snapshot, Buffer buffer);
 
 typedef struct SnapshotData
 {

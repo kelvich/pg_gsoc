@@ -26,8 +26,8 @@ PG_MODULE_MAGIC;
 #define ARRPTR(x)  ( (double *) ARR_DATA_PTR(x) )
 #define ARRNELEMS(x)  ArrayGetNItems( ARR_NDIM(x), ARR_DIMS(x))
 
-extern int	cube_yyparse();
-extern void cube_yyerror(const char *message);
+extern int	cube_yyparse(NDBOX **result);
+extern void cube_yyerror(NDBOX **result, const char *message);
 extern void cube_scanner_init(const char *str);
 extern void cube_scanner_finish(void);
 
@@ -36,7 +36,9 @@ extern void cube_scanner_finish(void);
 */
 
 PG_FUNCTION_INFO_V1(cube_in);
-// PG_FUNCTION_INFO_V1(cube);
+
+PG_FUNCTION_INFO_V1(cube_a_f8_f8);
+PG_FUNCTION_INFO_V1(cube_a_f8);
 PG_FUNCTION_INFO_V1(cube_out);
 PG_FUNCTION_INFO_V1(cube_c_f8);
 PG_FUNCTION_INFO_V1(cube_c_f8_f8);
@@ -47,7 +49,9 @@ PG_FUNCTION_INFO_V1(cube_subset);
 PG_FUNCTION_INFO_V1(cube_sort_by);
 
 Datum		cube_in(PG_FUNCTION_ARGS);
-// Datum		cube(PG_FUNCTION_ARGS);
+
+Datum		cube_a_f8_f8(PG_FUNCTION_ARGS);
+Datum		cube_a_f8(PG_FUNCTION_ARGS);
 Datum		cube_out(PG_FUNCTION_ARGS);
 Datum		cube_c_f8(PG_FUNCTION_ARGS);
 Datum		cube_c_f8_f8(PG_FUNCTION_ARGS);
@@ -360,13 +364,13 @@ Datum
 cube_in(PG_FUNCTION_ARGS)
 {
 	char	   *str = PG_GETARG_CSTRING(0);
-	void	   *result;
+	NDBOX	   *result;
 
 	// printf("cube_in for %s\n", str);
 	cube_scanner_init(str);
 
 	if (cube_yyparse(&result) != 0)
-		cube_yyerror("bogus input");
+		cube_yyerror(&result, "bogus input");
 
 	cube_scanner_finish();
 

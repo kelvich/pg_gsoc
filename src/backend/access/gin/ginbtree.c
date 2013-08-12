@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -173,7 +173,6 @@ void
 ginFindParents(GinBtree btree, GinBtreeStack *stack,
 			   BlockNumber rootBlkno)
 {
-
 	Page		page;
 	Buffer		buffer;
 	BlockNumber blkno,
@@ -308,7 +307,6 @@ ginInsertValue(GinBtree btree, GinBtreeStack *stack, GinStatsData *buildStats)
 
 				recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_INSERT, rdata);
 				PageSetLSN(page, recptr);
-				PageSetTLI(page, ThisTimeLineID);
 			}
 
 			LockBuffer(stack->buffer, GIN_UNLOCK);
@@ -377,11 +375,8 @@ ginInsertValue(GinBtree btree, GinBtreeStack *stack, GinStatsData *buildStats)
 
 					recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_SPLIT, rdata);
 					PageSetLSN(page, recptr);
-					PageSetTLI(page, ThisTimeLineID);
 					PageSetLSN(lpage, recptr);
-					PageSetTLI(lpage, ThisTimeLineID);
 					PageSetLSN(rpage, recptr);
-					PageSetTLI(rpage, ThisTimeLineID);
 				}
 
 				UnlockReleaseBuffer(rbuffer);
@@ -426,9 +421,7 @@ ginInsertValue(GinBtree btree, GinBtreeStack *stack, GinStatsData *buildStats)
 
 					recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_SPLIT, rdata);
 					PageSetLSN(lpage, recptr);
-					PageSetTLI(lpage, ThisTimeLineID);
 					PageSetLSN(rpage, recptr);
-					PageSetTLI(rpage, ThisTimeLineID);
 				}
 				UnlockReleaseBuffer(rbuffer);
 				END_CRIT_SECTION();

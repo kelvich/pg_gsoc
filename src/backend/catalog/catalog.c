@@ -5,7 +5,7 @@
  *		bits of hard-wired knowledge
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -37,6 +37,7 @@
 #include "catalog/pg_shseclabel.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/toasting.h"
+#include "common/relpath.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
 #include "utils/fmgroids.h"
@@ -44,21 +45,6 @@
 #include "utils/tqual.h"
 
 
-#define FORKNAMECHARS	4		/* max chars for a fork name */
-
-/*
- * Lookup table of fork name by fork number.
- *
- * If you add a new entry, remember to update the errhint below, and the
- * documentation for pg_relation_size(). Also keep FORKNAMECHARS above
- * up-to-date.
- */
-const char *forkNames[] = {
-	"main",						/* MAIN_FORKNUM */
-	"fsm",						/* FSM_FORKNUM */
-	"vm",						/* VISIBILITYMAP_FORKNUM */
-	"init"						/* INIT_FORKNUM */
-};
 
 /*
  * forkname_to_number - look up fork number by name
@@ -77,130 +63,6 @@ forkname_to_number(char *forkName)
 			 errmsg("invalid fork name"),
 			 errhint("Valid fork names are \"main\", \"fsm\", and \"vm\".")));
 	return InvalidForkNumber;	/* keep compiler quiet */
-}
-
-/*
- * forkname_chars
- *		We use this to figure out whether a filename could be a relation
- *		fork (as opposed to an oddly named stray file that somehow ended
- *		up in the database directory).	If the passed string begins with
- *		a fork name (other than the main fork name), we return its length,
- *		and set *fork (if not NULL) to the fork number.  If not, we return 0.
- *
- * Note that the present coding assumes that there are no fork names which
- * are prefixes of other fork names.
- */
-int
-forkname_chars(const char *str, ForkNumber *fork)
-{
-	ForkNumber	forkNum;
-
-	for (forkNum = 1; forkNum <= MAX_FORKNUM; forkNum++)
-	{
-		int			len = strlen(forkNames[forkNum]);
-
-		if (strncmp(forkNames[forkNum], str, len) == 0)
-		{
-			if (fork)
-				*fork = forkNum;
-			return len;
-		}
-	}
-	return 0;
-}
-
-/*
- * relpathbackend - construct path to a relation's file
- *
- * Result is a palloc'd string.
- */
-char *
-relpathbackend(RelFileNode rnode, BackendId backend, ForkNumber forknum)
-{
-	int			pathlen;
-	char	   *path;
-
-	if (rnode.spcNode == GLOBALTABLESPACE_OID)
-	{
-		/* Shared system relations live in {datadir}/global */
-		Assert(rnode.dbNode == 0);
-		Assert(backend == InvalidBackendId);
-		pathlen = 7 + OIDCHARS + 1 + FORKNAMECHARS + 1;
-		path = (char *) palloc(pathlen);
-		if (forknum != MAIN_FORKNUM)
-			snprintf(path, pathlen, "global/%u_%s",
-					 rnode.relNode, forkNames[forknum]);
-		else
-			snprintf(path, pathlen, "global/%u", rnode.relNode);
-	}
-	else if (rnode.spcNode == DEFAULTTABLESPACE_OID)
-	{
-		/* The default tablespace is {datadir}/base */
-		if (backend == InvalidBackendId)
-		{
-			pathlen = 5 + OIDCHARS + 1 + OIDCHARS + 1 + FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
-			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "base/%u/%u_%s",
-						 rnode.dbNode, rnode.relNode,
-						 forkNames[forknum]);
-			else
-				snprintf(path, pathlen, "base/%u/%u",
-						 rnode.dbNode, rnode.relNode);
-		}
-		else
-		{
-			/* OIDCHARS will suffice for an integer, too */
-			pathlen = 5 + OIDCHARS + 2 + OIDCHARS + 1 + OIDCHARS + 1
-				+ FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
-			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "base/%u/t%d_%u_%s",
-						 rnode.dbNode, backend, rnode.relNode,
-						 forkNames[forknum]);
-			else
-				snprintf(path, pathlen, "base/%u/t%d_%u",
-						 rnode.dbNode, backend, rnode.relNode);
-		}
-	}
-	else
-	{
-		/* All other tablespaces are accessed via symlinks */
-		if (backend == InvalidBackendId)
-		{
-			pathlen = 9 + 1 + OIDCHARS + 1
-				+ strlen(TABLESPACE_VERSION_DIRECTORY) + 1 + OIDCHARS + 1
-				+ OIDCHARS + 1 + FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
-			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/%u_%s",
-						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
-						 rnode.dbNode, rnode.relNode,
-						 forkNames[forknum]);
-			else
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/%u",
-						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
-						 rnode.dbNode, rnode.relNode);
-		}
-		else
-		{
-			/* OIDCHARS will suffice for an integer, too */
-			pathlen = 9 + 1 + OIDCHARS + 1
-				+ strlen(TABLESPACE_VERSION_DIRECTORY) + 1 + OIDCHARS + 2
-				+ OIDCHARS + 1 + OIDCHARS + 1 + FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
-			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/t%d_%u_%s",
-						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
-						 rnode.dbNode, backend, rnode.relNode,
-						 forkNames[forknum]);
-			else
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/t%d_%u",
-						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
-						 rnode.dbNode, backend, rnode.relNode);
-		}
-	}
-	return path;
 }
 
 /*
@@ -356,20 +218,16 @@ IsReservedName(const char *name)
  *		Given the OID of a relation, determine whether it's supposed to be
  *		shared across an entire database cluster.
  *
- * Hard-wiring this list is pretty grotty, but we really need it so that
- * we can compute the locktag for a relation (and then lock it) without
- * having already read its pg_class entry.	If we try to retrieve relisshared
- * from pg_class with no pre-existing lock, there is a race condition against
- * anyone who is concurrently committing a change to the pg_class entry:
- * since we read system catalog entries under SnapshotNow, it's possible
- * that both the old and new versions of the row are invalid at the instants
- * we scan them.  We fix this by insisting that updaters of a pg_class
- * row must hold exclusive lock on the corresponding rel, and that users
- * of a relation must hold at least AccessShareLock on the rel *before*
- * trying to open its relcache entry.  But to lock a rel, you have to
- * know if it's shared.  Fortunately, the set of shared relations is
- * fairly static, so a hand-maintained list of their OIDs isn't completely
- * impractical.
+ * In older releases, this had to be hard-wired so that we could compute the
+ * locktag for a relation and lock it before examining its catalog entry.
+ * Since we now have MVCC catalog access, the race conditions that made that
+ * a hard requirement are gone, so we could look at relaxing this restriction.
+ * However, if we scanned the pg_class entry to find relisshared, and only
+ * then locked the relation, pg_class could get updated in the meantime,
+ * forcing us to scan the relation again, which would definitely be complex
+ * and might have undesirable performance consequences.  Fortunately, the set
+ * of shared relations is fairly static, so a hand-maintained list of their
+ * OIDs isn't completely impractical.
  */
 bool
 IsSharedRelation(Oid relationId)
@@ -473,7 +331,7 @@ GetNewOid(Relation relation)
  * This is exported separately because there are cases where we want to use
  * an index that will not be recognized by RelationGetOidIndex: TOAST tables
  * have indexes that are usable, but have multiple columns and are on
- * ordinary columns rather than a true OID column.  This code will work
+ * ordinary columns rather than a true OID column.	This code will work
  * anyway, so long as the OID is the index's first column.  The caller must
  * pass in the actual heap attnum of the OID column, however.
  *

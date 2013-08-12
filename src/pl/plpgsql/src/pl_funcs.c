@@ -3,7 +3,7 @@
  * pl_funcs.c		- Misc functions for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -277,6 +277,8 @@ plpgsql_getdiag_kindname(int kind)
 			return "ROW_COUNT";
 		case PLPGSQL_GETDIAG_RESULT_OID:
 			return "RESULT_OID";
+		case PLPGSQL_GETDIAG_CONTEXT:
+			return "PG_CONTEXT";
 		case PLPGSQL_GETDIAG_ERROR_CONTEXT:
 			return "PG_EXCEPTION_CONTEXT";
 		case PLPGSQL_GETDIAG_ERROR_DETAIL:
@@ -285,8 +287,18 @@ plpgsql_getdiag_kindname(int kind)
 			return "PG_EXCEPTION_HINT";
 		case PLPGSQL_GETDIAG_RETURNED_SQLSTATE:
 			return "RETURNED_SQLSTATE";
+		case PLPGSQL_GETDIAG_COLUMN_NAME:
+			return "COLUMN_NAME";
+		case PLPGSQL_GETDIAG_CONSTRAINT_NAME:
+			return "CONSTRAINT_NAME";
+		case PLPGSQL_GETDIAG_DATATYPE_NAME:
+			return "PG_DATATYPE_NAME";
 		case PLPGSQL_GETDIAG_MESSAGE_TEXT:
 			return "MESSAGE_TEXT";
+		case PLPGSQL_GETDIAG_TABLE_NAME:
+			return "TABLE_NAME";
+		case PLPGSQL_GETDIAG_SCHEMA_NAME:
+			return "SCHEMA_NAME";
 	}
 
 	return "unknown";
@@ -1316,6 +1328,21 @@ dump_raise(PLpgSQL_stmt_raise *stmt)
 					break;
 				case PLPGSQL_RAISEOPTION_HINT:
 					printf("    HINT = ");
+					break;
+				case PLPGSQL_RAISEOPTION_COLUMN:
+					printf("    COLUMN = ");
+					break;
+				case PLPGSQL_RAISEOPTION_CONSTRAINT:
+					printf("    CONSTRAINT = ");
+					break;
+				case PLPGSQL_RAISEOPTION_DATATYPE:
+					printf("    DATATYPE = ");
+					break;
+				case PLPGSQL_RAISEOPTION_TABLE:
+					printf("    TABLE = ");
+					break;
+				case PLPGSQL_RAISEOPTION_SCHEMA:
+					printf("    SCHEMA = ");
 					break;
 			}
 			dump_expr(opt->expr);

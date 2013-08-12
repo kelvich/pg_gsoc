@@ -5,7 +5,7 @@
  *
  * See src/backend/access/transam/README for more information.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -570,6 +570,27 @@ GetCurrentSubTransactionId(void)
 	return s->subTransactionId;
 }
 
+/*
+ *	SubTransactionIsActive
+ *
+ * Test if the specified subxact ID is still active.  Note caller is
+ * responsible for checking whether this ID is relevant to the current xact.
+ */
+bool
+SubTransactionIsActive(SubTransactionId subxid)
+{
+	TransactionState s;
+
+	for (s = CurrentTransactionState; s != NULL; s = s->parent)
+	{
+		if (s->state == TRANS_ABORT)
+			continue;
+		if (s->subTransactionId == subxid)
+			return true;
+	}
+	return false;
+}
+
 
 /*
  *	GetCurrentCommandId
@@ -1003,8 +1024,8 @@ RecordTransactionCommit(void)
 		 *
 		 * It's safe to change the delayChkpt flag of our own backend without
 		 * holding the ProcArrayLock, since we're the only one modifying it.
-		 * This makes checkpoint's determination of which xacts are delayChkpt a
-		 * bit fuzzy, but it doesn't matter.
+		 * This makes checkpoint's determination of which xacts are delayChkpt
+		 * a bit fuzzy, but it doesn't matter.
 		 */
 		START_CRIT_SECTION();
 		MyPgXact->delayChkpt = true;
@@ -1825,6 +1846,8 @@ CommitTransaction(void)
 			break;
 	}
 
+	CallXactCallbacks(XACT_EVENT_PRE_COMMIT);
+
 	/*
 	 * The remaining actions cannot call any user-defined code, so it's safe
 	 * to start shutting down within-transaction services.	But note that most
@@ -2027,6 +2050,8 @@ PrepareTransaction(void)
 		if (!PreCommit_Portals(true))
 			break;
 	}
+
+	CallXactCallbacks(XACT_EVENT_PRE_PREPARE);
 
 	/*
 	 * The remaining actions cannot call any user-defined code, so it's safe
@@ -4058,8 +4083,12 @@ CommitSubTransaction(void)
 		elog(WARNING, "CommitSubTransaction while in %s state",
 			 TransStateAsString(s->state));
 
-	/* Pre-commit processing goes here -- nothing to do at the moment */
+	/* Pre-commit processing goes here */
 
+	CallSubXactCallbacks(SUBXACT_EVENT_PRE_COMMIT_SUB, s->subTransactionId,
+						 s->parent->subTransactionId);
+
+	/* Do the actual "commit", such as it is */
 	s->state = TRANS_COMMIT;
 
 	/* Must CCI to ensure commands of subtransaction are seen as done */
@@ -4654,12 +4683,11 @@ xact_redo_commit_internal(TransactionId xid, XLogRecPtr lsn,
 	 * from the template database, and then commit the transaction. If we
 	 * crash after all the files have been copied but before the commit, you
 	 * have files in the data directory without an entry in pg_database. To
-	 * minimize the window
-	 * for that, we use ForceSyncCommit() to rush the commit record to disk as
-	 * quick as possible. We have the same window during recovery, and forcing
-	 * an XLogFlush() (which updates minRecoveryPoint during recovery) helps
-	 * to reduce that problem window, for any user that requested
-	 * ForceSyncCommit().
+	 * minimize the window for that, we use ForceSyncCommit() to rush the
+	 * commit record to disk as quick as possible. We have the same window
+	 * during recovery, and forcing an XLogFlush() (which updates
+	 * minRecoveryPoint during recovery) helps to reduce that problem window,
+	 * for any user that requested ForceSyncCommit().
 	 */
 	if (XactCompletionForceSyncCommit(xinfo))
 		XLogFlush(lsn);

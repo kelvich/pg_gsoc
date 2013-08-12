@@ -1031,8 +1031,13 @@
     goes into copy-in mode, and the server may not send any more CopyData
     messages. After both sides have sent a CopyDone message, the copy mode
     is terminated, and the backend reverts to the command-processing mode.
-    See <xref linkend="protocol-replication"> for more information on the
-    subprotocol transmitted over copy-both mode.
+    In the event of a backend-detected error during copy-both mode,
+    the backend will issue an ErrorResponse message, discard frontend messages
+    until a Sync message is received, and then issue ReadyForQuery and return
+    to normal processing.  The frontend should treat receipt of ErrorResponse
+    as terminating the copy in both directions; no CopyDone should be sent
+    in this case.  See <xref linkend="protocol-replication"> for more
+    information on the subprotocol transmitted over copy-both mode.
    </para>
 
    <para>
@@ -1418,8 +1423,15 @@ The commands accepted in walsender mode are:
      <para>
       After streaming all the WAL on a timeline that is not the latest one,
       the server will end streaming by exiting the COPY mode. When the client
-      acknowledges this by also exiting COPY mode, the server responds with a
-      CommandComplete message, and is ready to accept a new command.
+      acknowledges this by also exiting COPY mode, the server sends a result
+      set with one row and two columns, indicating the next timeline in this
+      server's history. The first column is the next timeline's ID, and the
+      second column is the XLOG position where the switch happened. Usually,
+      the switch position is the end of the WAL that was streamed, but there
+      are corner cases where the server can send some WAL from the old
+      timeline that it has not itself replayed before promoting. Finally, the
+      server sends CommandComplete message, and is ready to accept a new
+      command.
      </para>
 
      <para>
@@ -1680,8 +1692,10 @@ The commands accepted in walsender mode are:
       </term>
       <listitem>
       <para>
-          The standby's current xmin. This may be 0, if the standby does not
-          support feedback, or is not yet in Hot Standby state.
+          The standby's current xmin. This may be 0, if the standby is
+          sending notification that Hot Standby feedback will no longer
+          be sent on this connection. Later non-zero messages may
+          reinitiate the feedback mechanism.
       </para>
       </listitem>
       </varlistentry>
@@ -1784,7 +1798,9 @@ The commands accepted in walsender mode are:
      </para>
      <para>
       The first ordinary result set contains the starting position of the
-      backup, given in XLogRecPtr format as a single column in a single row.
+      backup, in a single row with two columns. The first column contains
+      the start position given in XLogRecPtr format, and the second column
+      contains the corresponding timeline ID.
      </para>
      <para>
       The second ordinary result set has one row for each tablespace.
@@ -1827,7 +1843,9 @@ The commands accepted in walsender mode are:
       <quote>ustar interchange format</> specified in the POSIX 1003.1-2008
       standard) dump of the tablespace contents, except that the two trailing
       blocks of zeroes specified in the standard are omitted.
-      After the tar data is complete, a final ordinary result set will be sent.
+      After the tar data is complete, a final ordinary result set will be sent,
+      containing the WAL end position of the backup, in the same format as
+      the start position.
      </para>
 
      <para>
@@ -4753,6 +4771,72 @@ message.
 
 <varlistentry>
 <term>
+<literal>s</>
+</term>
+<listitem>
+<para>
+        Schema name: if the error was associated with a specific database
+        object, the name of the schema containing that object, if any.
+</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term>
+<literal>t</>
+</term>
+<listitem>
+<para>
+        Table name: if the error was associated with a specific table, the
+        name of the table.  (Refer to the schema name field for the name of
+        the table's schema.)
+</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term>
+<literal>c</>
+</term>
+<listitem>
+<para>
+        Column name: if the error was associated with a specific table column,
+        the name of the column.  (Refer to the schema and table name fields to
+        identify the table.)
+</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term>
+<literal>d</>
+</term>
+<listitem>
+<para>
+        Data type name: if the error was associated with a specific data type,
+        the name of the data type.  (Refer to the schema name field for the
+        name of the data type's schema.)
+</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term>
+<literal>n</>
+</term>
+<listitem>
+<para>
+        Constraint name: if the error was associated with a specific
+        constraint, the name of the constraint.  Refer to fields listed above
+        for the associated table or domain.  (For this purpose, indexes are
+        treated as constraints, even if they weren't created with constraint
+        syntax.)
+</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term>
 <literal>F</>
 </term>
 <listitem>
@@ -4787,6 +4871,19 @@ message.
 </varlistentry>
 
 </variablelist>
+
+<note>
+ <para>
+  The fields for schema name, table name, column name, data type name, and
+  constraint name are supplied only for a limited number of error types;
+  see <xref linkend="errcodes-appendix">.  Frontends should not assume that
+  the presence of any of these fields guarantees the presence of another
+  field.  Core error sources observe the interrelationships noted above, but
+  user-defined functions may use these fields in other ways.  In the same
+  vein, clients should not assume that these fields denote contemporary
+  objects in the current database.
+ </para>
+</note>
 
 <para>
 The client is responsible for formatting displayed information to meet its

@@ -950,9 +950,11 @@ SELECT * FROM v_window;
 (10 rows)
 
 SELECT pg_get_viewdef('v_window');
-                                                         pg_get_viewdef                                                          
----------------------------------------------------------------------------------------------------------------------------------
- SELECT i.i, sum(i.i) OVER (ORDER BY i.i ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS sum_rows FROM generate_series(1, 10) i(i);
+                                    pg_get_viewdef                                     
+---------------------------------------------------------------------------------------
+  SELECT i.i,                                                                         +
+     sum(i.i) OVER (ORDER BY i.i ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS sum_rows+
+    FROM generate_series(1, 10) i(i);
 (1 row)
 
 -- with UNION
@@ -987,9 +989,9 @@ ERROR:  window functions are not allowed in GROUP BY
 LINE 1: SELECT rank() OVER (ORDER BY 1), count(*) FROM empsalary GRO...
                ^
 SELECT * FROM rank() OVER (ORDER BY random());
-ERROR:  window functions are not allowed in functions in FROM
+ERROR:  syntax error at or near "ORDER"
 LINE 1: SELECT * FROM rank() OVER (ORDER BY random());
-                      ^
+                                   ^
 DELETE FROM empsalary WHERE (rank() OVER (ORDER BY random())) > 10;
 ERROR:  window functions are not allowed in WHERE
 LINE 1: DELETE FROM empsalary WHERE (rank() OVER (ORDER BY random())...
@@ -1018,5 +1020,18 @@ SELECT ntile(0) OVER (ORDER BY ten), ten, four FROM tenk1;
 ERROR:  argument of ntile must be greater than zero
 SELECT nth_value(four, 0) OVER (ORDER BY ten), ten, four FROM tenk1;
 ERROR:  argument of nth_value must be greater than zero
+-- filter
+SELECT sum(salary), row_number() OVER (ORDER BY depname), sum(
+    sum(salary) FILTER (WHERE enroll_date > '2007-01-01')
+) FILTER (WHERE depname <> 'sales') OVER (ORDER BY depname DESC) AS "filtered_sum",
+    depname
+FROM empsalary GROUP BY depname;
+  sum  | row_number | filtered_sum |  depname  
+-------+------------+--------------+-----------
+ 14600 |          3 |              | sales
+  7400 |          2 |         3500 | personnel
+ 25100 |          1 |        22600 | develop
+(3 rows)
+
 -- cleanup
 DROP TABLE empsalary;

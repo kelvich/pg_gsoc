@@ -35,7 +35,7 @@
  * and munge the system catalogs of the new database.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -64,6 +64,7 @@
 #include "commands/comment.h"
 #include "commands/seclabel.h"
 #include "commands/tablespace.h"
+#include "common/relpath.h"
 #include "miscadmin.h"
 #include "postmaster/bgwriter.h"
 #include "storage/fd.h"
@@ -222,7 +223,7 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
  * since we're determining the system layout and, anyway, we probably have
  * root if we're doing this kind of activity
  */
-void
+Oid
 CreateTableSpace(CreateTableSpaceStmt *stmt)
 {
 #ifdef HAVE_SYMLINK
@@ -330,8 +331,7 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 	recordDependencyOnOwner(TableSpaceRelationId, tablespaceoid, ownerId);
 
 	/* Post creation hook for new tablespace */
-	InvokeObjectAccessHook(OAT_POST_CREATE,
-						   TableSpaceRelationId, tablespaceoid, 0, NULL);
+	InvokeObjectPostCreateHook(TableSpaceRelationId, tablespaceoid, 0);
 
 	create_tablespace_directories(location, tablespaceoid);
 
@@ -371,6 +371,8 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			 errmsg("tablespaces are not supported on this platform")));
 #endif   /* HAVE_SYMLINK */
+
+	return tablespaceoid;
 }
 
 /*
@@ -398,7 +400,7 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 				Anum_pg_tablespace_spcname,
 				BTEqualStrategyNumber, F_NAMEEQ,
 				CStringGetDatum(tablespacename));
-	scandesc = heap_beginscan(rel, SnapshotNow, 1, entry);
+	scandesc = heap_beginscan_catalog(rel, 1, entry);
 	tuple = heap_getnext(scandesc, ForwardScanDirection);
 
 	if (!HeapTupleIsValid(tuple))
@@ -436,14 +438,7 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 					   tablespacename);
 
 	/* DROP hook for the tablespace being removed */
-	if (object_access_hook)
-	{
-		ObjectAccessDrop drop_arg;
-
-		memset(&drop_arg, 0, sizeof(ObjectAccessDrop));
-		InvokeObjectAccessHook(OAT_DROP, TableSpaceRelationId,
-							   tablespaceoid, 0, &drop_arg);
-	}
+	InvokeObjectDropHook(TableSpaceRelationId, tablespaceoid, 0);
 
 	/*
 	 * Remove the pg_tablespace tuple (this will roll back if we fail below)
@@ -818,9 +813,10 @@ directory_is_empty(const char *path)
 /*
  * Rename a tablespace
  */
-void
+Oid
 RenameTableSpace(const char *oldname, const char *newname)
 {
+	Oid			tspId;
 	Relation	rel;
 	ScanKeyData entry[1];
 	HeapScanDesc scan;
@@ -835,7 +831,7 @@ RenameTableSpace(const char *oldname, const char *newname)
 				Anum_pg_tablespace_spcname,
 				BTEqualStrategyNumber, F_NAMEEQ,
 				CStringGetDatum(oldname));
-	scan = heap_beginscan(rel, SnapshotNow, 1, entry);
+	scan = heap_beginscan_catalog(rel, 1, entry);
 	tup = heap_getnext(scan, ForwardScanDirection);
 	if (!HeapTupleIsValid(tup))
 		ereport(ERROR,
@@ -843,6 +839,7 @@ RenameTableSpace(const char *oldname, const char *newname)
 				 errmsg("tablespace \"%s\" does not exist",
 						oldname)));
 
+	tspId = HeapTupleGetOid(tup);
 	newtuple = heap_copytuple(tup);
 	newform = (Form_pg_tablespace) GETSTRUCT(newtuple);
 
@@ -864,7 +861,7 @@ RenameTableSpace(const char *oldname, const char *newname)
 				Anum_pg_tablespace_spcname,
 				BTEqualStrategyNumber, F_NAMEEQ,
 				CStringGetDatum(newname));
-	scan = heap_beginscan(rel, SnapshotNow, 1, entry);
+	scan = heap_beginscan_catalog(rel, 1, entry);
 	tup = heap_getnext(scan, ForwardScanDirection);
 	if (HeapTupleIsValid(tup))
 		ereport(ERROR,
@@ -880,19 +877,24 @@ RenameTableSpace(const char *oldname, const char *newname)
 	simple_heap_update(rel, &newtuple->t_self, newtuple);
 	CatalogUpdateIndexes(rel, newtuple);
 
+	InvokeObjectPostAlterHook(TableSpaceRelationId, tspId, 0);
+
 	heap_close(rel, NoLock);
+
+	return tspId;
 }
 
 /*
  * Alter table space options
  */
-void
+Oid
 AlterTableSpaceOptions(AlterTableSpaceOptionsStmt *stmt)
 {
 	Relation	rel;
 	ScanKeyData entry[1];
 	HeapScanDesc scandesc;
 	HeapTuple	tup;
+	Oid			tablespaceoid;
 	Datum		datum;
 	Datum		newOptions;
 	Datum		repl_val[Natts_pg_tablespace];
@@ -908,13 +910,15 @@ AlterTableSpaceOptions(AlterTableSpaceOptionsStmt *stmt)
 				Anum_pg_tablespace_spcname,
 				BTEqualStrategyNumber, F_NAMEEQ,
 				CStringGetDatum(stmt->tablespacename));
-	scandesc = heap_beginscan(rel, SnapshotNow, 1, entry);
+	scandesc = heap_beginscan_catalog(rel, 1, entry);
 	tup = heap_getnext(scandesc, ForwardScanDirection);
 	if (!HeapTupleIsValid(tup))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("tablespace \"%s\" does not exist",
 						stmt->tablespacename)));
+
+	tablespaceoid = HeapTupleGetOid(tup);
 
 	/* Must be owner of the existing object */
 	if (!pg_tablespace_ownercheck(HeapTupleGetOid(tup), GetUserId()))
@@ -943,11 +947,16 @@ AlterTableSpaceOptions(AlterTableSpaceOptionsStmt *stmt)
 	/* Update system catalog. */
 	simple_heap_update(rel, &newtuple->t_self, newtuple);
 	CatalogUpdateIndexes(rel, newtuple);
+
+	InvokeObjectPostAlterHook(TableSpaceRelationId, HeapTupleGetOid(tup), 0);
+
 	heap_freetuple(newtuple);
 
 	/* Conclude heap scan. */
 	heap_endscan(scandesc);
 	heap_close(rel, NoLock);
+
+	return tablespaceoid;
 }
 
 /*
@@ -1302,7 +1311,7 @@ get_tablespace_oid(const char *tablespacename, bool missing_ok)
 				Anum_pg_tablespace_spcname,
 				BTEqualStrategyNumber, F_NAMEEQ,
 				CStringGetDatum(tablespacename));
-	scandesc = heap_beginscan(rel, SnapshotNow, 1, entry);
+	scandesc = heap_beginscan_catalog(rel, 1, entry);
 	tuple = heap_getnext(scandesc, ForwardScanDirection);
 
 	/* We assume that there can be at most one matching tuple */
@@ -1348,7 +1357,7 @@ get_tablespace_name(Oid spc_oid)
 				ObjectIdAttributeNumber,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(spc_oid));
-	scandesc = heap_beginscan(rel, SnapshotNow, 1, entry);
+	scandesc = heap_beginscan_catalog(rel, 1, entry);
 	tuple = heap_getnext(scandesc, ForwardScanDirection);
 
 	/* We assume that there can be at most one matching tuple */

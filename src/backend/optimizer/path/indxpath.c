@@ -4,7 +4,7 @@
  *	  Routines to determine which indexes are usable for scanning a
  *	  given relation, and create Paths accordingly.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -77,6 +77,13 @@ typedef struct
 	List	   *preds;			/* predicates of its partial index(es) */
 	Bitmapset  *clauseids;		/* quals+preds represented as a bitmapset */
 } PathClauseUsage;
+
+/* Callback argument for ec_member_matches_indexcol */
+typedef struct
+{
+	IndexOptInfo *index;		/* index we're considering */
+	int			indexcol;		/* index column we want to match to */
+} ec_member_matches_arg;
 
 
 static void consider_index_join_clauses(PlannerInfo *root, RelOptInfo *rel,
@@ -162,6 +169,9 @@ static void match_pathkeys_to_index(IndexOptInfo *index, List *pathkeys,
 						List **clause_columns_p);
 static Expr *match_clause_to_ordering_op(IndexOptInfo *index,
 							int indexcol, Expr *clause, Oid pk_opfamily);
+static bool ec_member_matches_indexcol(PlannerInfo *root, RelOptInfo *rel,
+						   EquivalenceClass *ec, EquivalenceMember *em,
+						   void *arg);
 static bool match_boolean_index_clause(Node *clause, int indexcol,
 						   IndexOptInfo *index);
 static bool match_special_index_operator(Expr *clause,
@@ -240,7 +250,7 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 	 * If there are any rels that have LATERAL references to this one, we
 	 * cannot use join quals referencing them as index quals for this one,
 	 * since such rels would have to be on the inside not the outside of a
-	 * nestloop join relative to this one.  Create a Relids set listing all
+	 * nestloop join relative to this one.	Create a Relids set listing all
 	 * such rels, for use in checks of potential join clauses.
 	 */
 	lateral_referencers = NULL;
@@ -472,7 +482,7 @@ consider_index_join_clauses(PlannerInfo *root, RelOptInfo *rel,
 	 *
 	 * For simplicity in selecting relevant clauses, we represent each set of
 	 * outer rels as a maximum set of clause_relids --- that is, the indexed
-	 * relation itself is also included in the relids set.  considered_relids
+	 * relation itself is also included in the relids set.	considered_relids
 	 * lists all relids sets we've already tried.
 	 */
 	for (indexcol = 0; indexcol < index->ncolumns; indexcol++)
@@ -547,7 +557,7 @@ consider_index_join_outer_rels(PlannerInfo *root, RelOptInfo *rel,
 		 */
 		foreach(lc2, *considered_relids)
 		{
-			Relids	oldrelids = (Relids) lfirst(lc2);
+			Relids		oldrelids = (Relids) lfirst(lc2);
 
 			/*
 			 * If either is a subset of the other, no new set is possible.
@@ -561,7 +571,7 @@ consider_index_join_outer_rels(PlannerInfo *root, RelOptInfo *rel,
 			/*
 			 * If this clause was derived from an equivalence class, the
 			 * clause list may contain other clauses derived from the same
-			 * eclass.  We should not consider that combining this clause with
+			 * eclass.	We should not consider that combining this clause with
 			 * one of those clauses generates a usefully different
 			 * parameterization; so skip if any clause derived from the same
 			 * eclass would already have been included when using oldrelids.
@@ -644,9 +654,9 @@ get_join_index_paths(PlannerInfo *root, RelOptInfo *rel,
 		}
 
 		/*
-		 * Add applicable eclass join clauses.  The clauses generated for each
-		 * column are redundant (cf generate_implied_equalities_for_indexcol),
-		 * so we need at most one.  This is the only exception to the general
+		 * Add applicable eclass join clauses.	The clauses generated for each
+		 * column are redundant (cf generate_implied_equalities_for_column),
+		 * so we need at most one.	This is the only exception to the general
 		 * rule of using all available index clauses.
 		 */
 		foreach(lc, eclauseset->indexclauses[indexcol])
@@ -1992,18 +2002,22 @@ match_eclass_clauses_to_index(PlannerInfo *root, IndexOptInfo *index,
 
 	for (indexcol = 0; indexcol < index->ncolumns; indexcol++)
 	{
+		ec_member_matches_arg arg;
 		List	   *clauses;
 
 		/* Generate clauses, skipping any that join to lateral_referencers */
-		clauses = generate_implied_equalities_for_indexcol(root,
-														   index,
-														   indexcol,
-														lateral_referencers);
+		arg.index = index;
+		arg.indexcol = indexcol;
+		clauses = generate_implied_equalities_for_column(root,
+														 index->rel,
+												  ec_member_matches_indexcol,
+														 (void *) &arg,
+														 lateral_referencers);
 
 		/*
 		 * We have to check whether the results actually do match the index,
 		 * since for non-btree indexes the EC's equality operators might not
-		 * be in the index opclass (cf eclass_member_matches_indexcol).
+		 * be in the index opclass (cf ec_member_matches_indexcol).
 		 */
 		match_clauses_to_index(index, clauses, clauseset);
 	}
@@ -2616,8 +2630,8 @@ check_partial_indexes(PlannerInfo *root, RelOptInfo *rel)
 		return;
 
 	/*
-	 * Construct a list of clauses that we can assume true for the purpose
-	 * of proving the index(es) usable.  Restriction clauses for the rel are
+	 * Construct a list of clauses that we can assume true for the purpose of
+	 * proving the index(es) usable.  Restriction clauses for the rel are
 	 * always usable, and so are any join clauses that are "movable to" this
 	 * rel.  Also, we can consider any EC-derivable join clauses (which must
 	 * be "movable to" this rel, by definition).
@@ -2639,8 +2653,8 @@ check_partial_indexes(PlannerInfo *root, RelOptInfo *rel)
 	/*
 	 * Add on any equivalence-derivable join clauses.  Computing the correct
 	 * relid sets for generate_join_implied_equalities is slightly tricky
-	 * because the rel could be a child rel rather than a true baserel, and
-	 * in that case we must remove its parent's relid from all_baserels.
+	 * because the rel could be a child rel rather than a true baserel, and in
+	 * that case we must remove its parent's relid from all_baserels.
 	 */
 	if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
 	{
@@ -2657,8 +2671,8 @@ check_partial_indexes(PlannerInfo *root, RelOptInfo *rel)
 		clauselist =
 			list_concat(clauselist,
 						generate_join_implied_equalities(root,
-														 bms_union(rel->relids,
-																   otherrels),
+													   bms_union(rel->relids,
+																 otherrels),
 														 otherrels,
 														 rel));
 
@@ -2682,15 +2696,18 @@ check_partial_indexes(PlannerInfo *root, RelOptInfo *rel)
  ****************************************************************************/
 
 /*
- * eclass_member_matches_indexcol
+ * ec_member_matches_indexcol
  *	  Test whether an EquivalenceClass member matches an index column.
  *
- * This is exported for use by generate_implied_equalities_for_indexcol.
+ * This is a callback for use by generate_implied_equalities_for_column.
  */
-bool
-eclass_member_matches_indexcol(EquivalenceClass *ec, EquivalenceMember *em,
-							   IndexOptInfo *index, int indexcol)
+static bool
+ec_member_matches_indexcol(PlannerInfo *root, RelOptInfo *rel,
+						   EquivalenceClass *ec, EquivalenceMember *em,
+						   void *arg)
 {
+	IndexOptInfo *index = ((ec_member_matches_arg *) arg)->index;
+	int			indexcol = ((ec_member_matches_arg *) arg)->indexcol;
 	Oid			curFamily = index->opfamily[indexcol];
 	Oid			curCollation = index->indexcollations[indexcol];
 
@@ -2701,7 +2718,7 @@ eclass_member_matches_indexcol(EquivalenceClass *ec, EquivalenceMember *em,
 	 * whether clauses generated from the EC could be used with the index, so
 	 * don't check the opfamily.  This might mean we return "true" for a
 	 * useless EC, so we have to recheck the results of
-	 * generate_implied_equalities_for_indexcol; see
+	 * generate_implied_equalities_for_column; see
 	 * match_eclass_clauses_to_index.
 	 */
 	if (index->relam == BTREE_AM_OID &&

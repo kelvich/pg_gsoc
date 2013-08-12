@@ -3,7 +3,7 @@
  * file_fdw.c
  *		  foreign-data wrapper for server-side flat files.
  *
- * Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/file_fdw/file_fdw.c
@@ -140,8 +140,8 @@ static void fileGetOptions(Oid foreigntableid,
 			   char **filename, List **other_options);
 static List *get_file_fdw_attribute_options(Oid relid);
 static bool check_selective_binary_conversion(RelOptInfo *baserel,
-											  Oid foreigntableid,
-											  List **columns);
+								  Oid foreigntableid,
+								  List **columns);
 static void estimate_size(PlannerInfo *root, RelOptInfo *baserel,
 			  FileFdwPlanState *fdw_private);
 static void estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
@@ -478,7 +478,7 @@ fileGetForeignPaths(PlannerInfo *root,
 				   &startup_cost, &total_cost);
 
 	/*
-	 * Create a ForeignPath node and add it as only possible path.  We use the
+	 * Create a ForeignPath node and add it as only possible path.	We use the
 	 * fdw_private list of the path to carry the convert_selectively option;
 	 * it will be propagated into the fdw_private list of the Plan node.
 	 */
@@ -588,6 +588,7 @@ fileBeginForeignScan(ForeignScanState *node, int eflags)
 	 */
 	cstate = BeginCopyFrom(node->ss.ss_currentRelation,
 						   filename,
+						   false,
 						   NIL,
 						   options);
 
@@ -660,6 +661,7 @@ fileReScanForeignScan(ForeignScanState *node)
 
 	festate->cstate = BeginCopyFrom(node->ss.ss_currentRelation,
 									festate->filename,
+									false,
 									NIL,
 									festate->options);
 }
@@ -768,7 +770,7 @@ check_selective_binary_conversion(RelOptInfo *baserel,
 	/* Add all the attributes used by restriction clauses. */
 	foreach(lc, baserel->baserestrictinfo)
 	{
-		RestrictInfo   *rinfo = (RestrictInfo *) lfirst(lc);
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
 
 		pull_varattnos((Node *) rinfo->clause, baserel->relid,
 					   &attrs_used);
@@ -993,7 +995,7 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 	/*
 	 * Create CopyState from FDW options.
 	 */
-	cstate = BeginCopyFrom(onerel, filename, NIL, options);
+	cstate = BeginCopyFrom(onerel, filename, false, NIL, options);
 
 	/*
 	 * Use per-tuple memory context to prevent leak of memory used to read

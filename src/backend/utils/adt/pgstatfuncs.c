@@ -3,7 +3,7 @@
  * pgstatfuncs.c
  *	  Functions for accessing the statistics collector data
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -34,6 +34,7 @@ extern Datum pg_stat_get_tuples_deleted(PG_FUNCTION_ARGS);
 extern Datum pg_stat_get_tuples_hot_updated(PG_FUNCTION_ARGS);
 extern Datum pg_stat_get_live_tuples(PG_FUNCTION_ARGS);
 extern Datum pg_stat_get_dead_tuples(PG_FUNCTION_ARGS);
+extern Datum pg_stat_get_mod_since_analyze(PG_FUNCTION_ARGS);
 extern Datum pg_stat_get_blocks_fetched(PG_FUNCTION_ARGS);
 extern Datum pg_stat_get_blocks_hit(PG_FUNCTION_ARGS);
 extern Datum pg_stat_get_last_vacuum_time(PG_FUNCTION_ARGS);
@@ -260,6 +261,22 @@ pg_stat_get_dead_tuples(PG_FUNCTION_ARGS)
 		result = 0;
 	else
 		result = (int64) (tabentry->n_dead_tuples);
+
+	PG_RETURN_INT64(result);
+}
+
+
+Datum
+pg_stat_get_mod_since_analyze(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	int64		result;
+	PgStat_StatTabEntry *tabentry;
+
+	if ((tabentry = pgstat_fetch_stat_tabentry(relid)) == NULL)
+		result = 0;
+	else
+		result = (int64) (tabentry->changes_since_analyze);
 
 	PG_RETURN_INT64(result);
 }
@@ -666,15 +683,8 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					nulls[4] = true;
 					break;
 			}
-			if (beentry->st_state == STATE_UNDEFINED ||
-				beentry->st_state == STATE_DISABLED)
-			{
-				values[5] = CStringGetTextDatum("");
-			}
-			else
-			{
-				values[5] = CStringGetTextDatum(beentry->st_activity);
-			}
+
+			values[5] = CStringGetTextDatum(beentry->st_activity);
 			values[6] = BoolGetDatum(beentry->st_waiting);
 
 			if (beentry->st_xact_start_timestamp != 0)

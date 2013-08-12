@@ -3,7 +3,7 @@
  * walreceiver.h
  *	  Exports from replication/walreceiverfuncs.c.
  *
- * Portions Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *
  * src/include/replication/walreceiver.h
  *
@@ -60,17 +60,17 @@ typedef struct
 	pg_time_t	startTime;
 
 	/*
-	 * receiveStart and receiveStartTLI indicate the first byte position
-	 * and timeline that will be received. When startup process starts the
-	 * walreceiver, it sets these to the point where it wants the streaming
-	 * to begin.
+	 * receiveStart and receiveStartTLI indicate the first byte position and
+	 * timeline that will be received. When startup process starts the
+	 * walreceiver, it sets these to the point where it wants the streaming to
+	 * begin.
 	 */
 	XLogRecPtr	receiveStart;
 	TimeLineID	receiveStartTLI;
 
 	/*
 	 * receivedUpto-1 is the last byte position that has already been
-	 * received, and receivedTLI is the timeline it came from.  At the first
+	 * received, and receivedTLI is the timeline it came from.	At the first
 	 * startup of walreceiver, these are set to receiveStart and
 	 * receiveStartTLI. After that, walreceiver updates these whenever it
 	 * flushes the received WAL to disk.
@@ -128,7 +128,7 @@ extern PGDLLIMPORT walrcv_readtimelinehistoryfile_type walrcv_readtimelinehistor
 typedef bool (*walrcv_startstreaming_type) (TimeLineID tli, XLogRecPtr startpoint);
 extern PGDLLIMPORT walrcv_startstreaming_type walrcv_startstreaming;
 
-typedef void (*walrcv_endstreaming_type) (void);
+typedef void (*walrcv_endstreaming_type) (TimeLineID *next_tli);
 extern PGDLLIMPORT walrcv_endstreaming_type walrcv_endstreaming;
 
 typedef int (*walrcv_receive_type) (int timeout, char **buffer);

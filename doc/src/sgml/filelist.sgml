@@ -134,6 +134,8 @@
 <!ENTITY pgtesttiming    SYSTEM "pgtesttiming.sgml">
 <!ENTITY pgtrgm          SYSTEM "pgtrgm.sgml">
 <!ENTITY pgupgrade       SYSTEM "pgupgrade.sgml">
+<!ENTITY pgxlogdump      SYSTEM "pg_xlogdump.sgml">
+<!ENTITY postgres-fdw    SYSTEM "postgres-fdw.sgml">
 <!ENTITY seg             SYSTEM "seg.sgml">
 <!ENTITY contrib-spi     SYSTEM "contrib-spi.sgml">
 <!ENTITY sepgsql         SYSTEM "sepgsql.sgml">
@@ -157,6 +159,7 @@
 <!ENTITY sourcerepo SYSTEM "sourcerepo.sgml">
 
 <!ENTITY release    SYSTEM "release.sgml">
+<!ENTITY release-9.3    SYSTEM "release-9.3.sgml">
 <!ENTITY release-9.2    SYSTEM "release-9.2.sgml">
 <!ENTITY release-9.1    SYSTEM "release-9.1.sgml">
 <!ENTITY release-9.0    SYSTEM "release-9.0.sgml">

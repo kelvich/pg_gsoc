@@ -3,7 +3,7 @@
  * ilist.c
  *	  support for integrated/inline doubly- and singly- linked lists
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,7 +28,7 @@
  *
  * It is not allowed to delete a 'node' which is is not in the list 'head'
  *
- * Caution: this is O(n)
+ * Caution: this is O(n); consider using slist_delete_current() instead.
  */
 void
 slist_delete(slist_head *head, slist_node *node)

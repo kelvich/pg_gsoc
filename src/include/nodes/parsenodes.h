@@ -10,7 +10,7 @@
  * the location.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/parsenodes.h
@@ -74,7 +74,7 @@ typedef uint32 AclMode;			/* a bitmask of privilege bits */
 #define ACL_CONNECT		(1<<11) /* for databases */
 #define N_ACL_RIGHTS	12		/* 1 plus the last 1<<x */
 #define ACL_NO_RIGHTS	0
-/* Currently, SELECT ... FOR UPDATE/FOR SHARE requires UPDATE privileges */
+/* Currently, SELECT ... FOR [KEY] UPDATE/SHARE requires UPDATE privileges */
 #define ACL_SELECT_FOR_UPDATE	ACL_UPDATE
 
 
@@ -119,7 +119,7 @@ typedef struct Query
 	bool		hasDistinctOn;	/* distinctClause is from DISTINCT ON */
 	bool		hasRecursive;	/* WITH RECURSIVE was specified */
 	bool		hasModifyingCTE;	/* has INSERT/UPDATE/DELETE in WITH */
-	bool		hasForUpdate;	/* FOR UPDATE or FOR SHARE was specified */
+	bool		hasForUpdate;	/* FOR [KEY] UPDATE/SHARE was specified */
 
 	List	   *cteList;		/* WITH list (of CommonTableExpr's) */
 
@@ -127,6 +127,8 @@ typedef struct Query
 	FromExpr   *jointree;		/* table join tree (FROM and WHERE clauses) */
 
 	List	   *targetList;		/* target list (of TargetEntry) */
+
+	List	   *withCheckOptions; /* a list of WithCheckOption's */
 
 	List	   *returningList;	/* return-values list (of TargetEntry) */
 
@@ -283,8 +285,13 @@ typedef struct CollateClause
  * agg_star indicates we saw a 'foo(*)' construct, while agg_distinct
  * indicates we saw 'foo(DISTINCT ...)'.  In any of these cases, the
  * construct *must* be an aggregate call.  Otherwise, it might be either an
- * aggregate or some other kind of function.  However, if OVER is present
- * it had better be an aggregate or window function.
+ * aggregate or some other kind of function.  However, if FILTER or OVER is
+ * present it had better be an aggregate or window function.
+ *
+ * Normally, you'd initialize this via makeFuncCall() and then only
+ * change the parts of the struct its defaults don't match afterwards
+ * if needed.
+ *
  */
 typedef struct FuncCall
 {
@@ -292,6 +299,7 @@ typedef struct FuncCall
 	List	   *funcname;		/* qualified name of function */
 	List	   *args;			/* the arguments (list of exprs) */
 	List	   *agg_order;		/* ORDER BY (list of SortBy) */
+	Node	   *agg_filter;		/* FILTER clause, if any */
 	bool		agg_star;		/* argument was really '*' */
 	bool		agg_distinct;	/* arguments were labeled DISTINCT */
 	bool		func_variadic;	/* last argument was labeled VARIADIC */
@@ -463,6 +471,7 @@ typedef struct RangeFunction
 {
 	NodeTag		type;
 	bool		lateral;		/* does it have LATERAL prefix? */
+	bool		ordinality;		/* does it have WITH ORDINALITY suffix? */
 	Node	   *funccallnode;	/* untransformed function call tree */
 	Alias	   *alias;			/* table alias & optional column aliases */
 	List	   *coldeflist;		/* list of ColumnDef nodes to describe result
@@ -572,18 +581,28 @@ typedef struct DefElem
 } DefElem;
 
 /*
- * LockingClause - raw representation of FOR UPDATE/SHARE options
+ * LockingClause - raw representation of FOR [NO KEY] UPDATE/[KEY] SHARE
+ *		options
  *
  * Note: lockedRels == NIL means "all relations in query".	Otherwise it
  * is a list of RangeVar nodes.  (We use RangeVar mainly because it carries
  * a location field --- currently, parse analysis insists on unqualified
  * names in LockingClause.)
  */
+typedef enum LockClauseStrength
+{
+	/* order is important -- see applyLockingClause */
+	LCS_FORKEYSHARE,
+	LCS_FORSHARE,
+	LCS_FORNOKEYUPDATE,
+	LCS_FORUPDATE
+} LockClauseStrength;
+
 typedef struct LockingClause
 {
 	NodeTag		type;
-	List	   *lockedRels;		/* FOR UPDATE or FOR SHARE relations */
-	bool		forUpdate;		/* true = FOR UPDATE, false = FOR SHARE */
+	List	   *lockedRels;		/* FOR [KEY] UPDATE/SHARE relations */
+	LockClauseStrength strength;
 	bool		noWait;			/* NOWAIT option */
 } LockingClause;
 
@@ -633,8 +652,13 @@ typedef struct XmlSerialize
  *	  dropped columns.	Note however that a stored rule may have nonempty
  *	  colnames for columns dropped since the rule was created (and for that
  *	  matter the colnames might be out of date due to column renamings).
+ *
  *	  The same comments apply to FUNCTION RTEs when the function's return type
- *	  is a named composite type.
+ *	  is a named composite type. In addition, for all return types, FUNCTION
+ *    RTEs with ORDINALITY must always have the last colname entry being the
+ *    one for the ordinal column; this is enforced when constructing the RTE.
+ *    Thus when ORDINALITY is used, there will be exactly one more colname
+ *    than would have been present otherwise.
  *
  *	  In JOIN RTEs, the colnames in both alias and eref are one-to-one with
  *	  joinaliasvars entries.  A JOIN RTE will omit columns of its inputs when
@@ -642,7 +666,7 @@ typedef struct XmlSerialize
  *	  a stored rule might contain entries for columns dropped since the rule
  *	  was created.	(This is only possible for columns not actually referenced
  *	  in the rule.)  When loading a stored rule, we replace the joinaliasvars
- *	  items for any such columns with NULL Consts.	(We can't simply delete
+ *	  items for any such columns with null pointers.  (We can't simply delete
  *	  them from the joinaliasvars list, because that would affect the attnums
  *	  of Vars referencing the rest of the list.)
  *
@@ -713,13 +737,19 @@ typedef struct RangeTblEntry
 	/*
 	 * Fields valid for a join RTE (else NULL/zero):
 	 *
-	 * joinaliasvars is a list of Vars or COALESCE expressions corresponding
-	 * to the columns of the join result.  An alias Var referencing column K
-	 * of the join result can be replaced by the K'th element of joinaliasvars
-	 * --- but to simplify the task of reverse-listing aliases correctly, we
-	 * do not do that until planning time.	In a Query loaded from a stored
-	 * rule, it is also possible for joinaliasvars items to be NULL Consts,
-	 * denoting columns dropped since the rule was made.
+	 * joinaliasvars is a list of (usually) Vars corresponding to the columns
+	 * of the join result.	An alias Var referencing column K of the join
+	 * result can be replaced by the K'th element of joinaliasvars --- but to
+	 * simplify the task of reverse-listing aliases correctly, we do not do
+	 * that until planning time.  In detail: an element of joinaliasvars can
+	 * be a Var of one of the join's input relations, or such a Var with an
+	 * implicit coercion to the join's output column type, or a COALESCE
+	 * expression containing the two input column Vars (possibly coerced).
+	 * Within a Query loaded from a stored rule, it is also possible for
+	 * joinaliasvars items to be null pointers, which are placeholders for
+	 * (necessarily unreferenced) columns dropped since the rule was made.
+	 * Also, once planning begins, joinaliasvars items can be almost anything,
+	 * as a result of subquery-flattening substitutions.
 	 */
 	JoinType	jointype;		/* type of join */
 	List	   *joinaliasvars;	/* list of alias-var expansions */
@@ -727,15 +757,21 @@ typedef struct RangeTblEntry
 	/*
 	 * Fields valid for a function RTE (else NULL):
 	 *
-	 * If the function returns RECORD, funccoltypes lists the column types
-	 * declared in the RTE's column type specification, funccoltypmods lists
-	 * their declared typmods, funccolcollations their collations.	Otherwise,
-	 * those fields are NIL.
+	 * If the function returns an otherwise-unspecified RECORD, funccoltypes
+	 * lists the column types declared in the RTE's column type specification,
+	 * funccoltypmods lists their declared typmods, funccolcollations their
+	 * collations.  Note that in this case, ORDINALITY is not permitted, so
+	 * there is no extra ordinal column to be allowed for.
+	 *
+     * Otherwise, those fields are NIL, and the result column types must be
+	 * derived from the funcexpr while treating the ordinal column, if
+	 * present, as a special case.  (see get_rte_attribute_*)
 	 */
 	Node	   *funcexpr;		/* expression tree for func call */
 	List	   *funccoltypes;	/* OID list of column type OIDs */
 	List	   *funccoltypmods; /* integer list of column typmods */
 	List	   *funccolcollations;		/* OID list of column collation OIDs */
+	bool		funcordinality;	/* is this called WITH ORDINALITY? */
 
 	/*
 	 * Fields valid for a values RTE (else NIL):
@@ -766,6 +802,19 @@ typedef struct RangeTblEntry
 	Bitmapset  *selectedCols;	/* columns needing SELECT permission */
 	Bitmapset  *modifiedCols;	/* columns needing INSERT/UPDATE permission */
 } RangeTblEntry;
+
+/*
+ * WithCheckOption -
+ *		representation of WITH CHECK OPTION checks to be applied to new tuples
+ *		when inserting/updating an auto-updatable view.
+ */
+typedef struct WithCheckOption
+{
+	NodeTag		type;
+	char	   *viewname;	/* name of view that specified the WCO */
+	Node	   *qual;		/* constraint qual to check */
+	bool		cascaded;	/* true = WITH CASCADED CHECK OPTION */
+} WithCheckOption;
 
 /*
  * SortGroupClause -
@@ -865,21 +914,21 @@ typedef struct WindowClause
 
 /*
  * RowMarkClause -
- *	   parser output representation of FOR UPDATE/SHARE clauses
+ *	   parser output representation of FOR [KEY] UPDATE/SHARE clauses
  *
  * Query.rowMarks contains a separate RowMarkClause node for each relation
- * identified as a FOR UPDATE/SHARE target.  If FOR UPDATE/SHARE is applied
- * to a subquery, we generate RowMarkClauses for all normal and subquery rels
- * in the subquery, but they are marked pushedDown = true to distinguish them
- * from clauses that were explicitly written at this query level.  Also,
- * Query.hasForUpdate tells whether there were explicit FOR UPDATE/SHARE
- * clauses in the current query level.
+ * identified as a FOR [KEY] UPDATE/SHARE target.  If one of these clauses
+ * is applied to a subquery, we generate RowMarkClauses for all normal and
+ * subquery rels in the subquery, but they are marked pushedDown = true to
+ * distinguish them from clauses that were explicitly written at this query
+ * level.  Also, Query.hasForUpdate tells whether there were explicit FOR
+ * UPDATE/SHARE/KEY SHARE clauses in the current query level.
  */
 typedef struct RowMarkClause
 {
 	NodeTag		type;
 	Index		rti;			/* range table index of target relation */
-	bool		forUpdate;		/* true = FOR UPDATE, false = FOR SHARE */
+	LockClauseStrength strength;
 	bool		noWait;			/* NOWAIT option */
 	bool		pushedDown;		/* pushed down from higher query level? */
 } RowMarkClause;
@@ -1125,6 +1174,7 @@ typedef enum ObjectType
 	OBJECT_INDEX,
 	OBJECT_LANGUAGE,
 	OBJECT_LARGEOBJECT,
+	OBJECT_MATVIEW,
 	OBJECT_OPCLASS,
 	OBJECT_OPERATOR,
 	OBJECT_OPFAMILY,
@@ -1198,6 +1248,7 @@ typedef enum AlterTableType
 	AT_AddConstraint,			/* add constraint */
 	AT_AddConstraintRecurse,	/* internal to commands/tablecmds.c */
 	AT_ReAddConstraint,			/* internal to commands/tablecmds.c */
+	AT_AlterConstraint,			/* alter constraint */
 	AT_ValidateConstraint,		/* validate constraint */
 	AT_ValidateConstraintRecurse,		/* internal to commands/tablecmds.c */
 	AT_ProcessedConstraint,		/* pre-processed add constraint (local in
@@ -1397,6 +1448,7 @@ typedef struct CopyStmt
 	List	   *attlist;		/* List of column names (as Strings), or NIL
 								 * for all columns */
 	bool		is_from;		/* TO or FROM */
+	bool		is_program;		/* is 'filename' a program to popen? */
 	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
 	List	   *options;		/* List of DefElem nodes */
 } CopyStmt;
@@ -1496,7 +1548,8 @@ typedef struct CreateStmt
 
 typedef enum ConstrType			/* types of constraints */
 {
-	CONSTR_NULL,				/* not SQL92, but a lot of people expect it */
+	CONSTR_NULL,				/* not standard SQL, but a lot of people
+								 * expect it */
 	CONSTR_NOTNULL,
 	CONSTR_DEFAULT,
 	CONSTR_CHECK,
@@ -2313,6 +2366,13 @@ typedef struct AlterEnumStmt
  *		Create View Statement
  * ----------------------
  */
+typedef enum ViewCheckOption
+{
+	NO_CHECK_OPTION,
+	LOCAL_CHECK_OPTION,
+	CASCADED_CHECK_OPTION
+} ViewCheckOption;
+
 typedef struct ViewStmt
 {
 	NodeTag		type;
@@ -2321,6 +2381,7 @@ typedef struct ViewStmt
 	Node	   *query;			/* the SELECT query */
 	bool		replace;		/* replace an existing view? */
 	List	   *options;		/* options from WITH clause */
+	ViewCheckOption	withCheckOption; /* WITH CHECK OPTION */
 } ViewStmt;
 
 /* ----------------------
@@ -2436,6 +2497,8 @@ typedef struct ExplainStmt
  * A query written as CREATE TABLE AS will produce this node type natively.
  * A query written as SELECT ... INTO will be transformed to this form during
  * parse analysis.
+ * A query written as CREATE MATERIALIZED view will produce this node type,
+ * during parse analysis, since it needs all the same data.
  *
  * The "query" field is handled similarly to EXPLAIN, though note that it
  * can be a SELECT or an EXECUTE, but not other DML statements.
@@ -2446,8 +2509,21 @@ typedef struct CreateTableAsStmt
 	NodeTag		type;
 	Node	   *query;			/* the query (see comments above) */
 	IntoClause *into;			/* destination table */
+	ObjectType	relkind;		/* OBJECT_TABLE or OBJECT_MATVIEW */
 	bool		is_select_into; /* it was written as SELECT INTO */
 } CreateTableAsStmt;
+
+/* ----------------------
+ *		REFRESH MATERIALIZED VIEW Statement
+ * ----------------------
+ */
+typedef struct RefreshMatViewStmt
+{
+	NodeTag		type;
+	bool		concurrent;		/* allow concurrent access? */
+	bool		skipData;		/* true for WITH NO DATA */
+	RangeVar   *relation;		/* relation to insert into */
+} RefreshMatViewStmt;
 
 /* ----------------------
  * Checkpoint Statement
@@ -2506,7 +2582,7 @@ typedef struct ConstraintsSetStmt
 typedef struct ReindexStmt
 {
 	NodeTag		type;
-	ObjectType	kind;			/* OBJECT_INDEX, OBJECT_TABLE, OBJECT_DATABASE */
+	ObjectType	kind;			/* OBJECT_INDEX, OBJECT_TABLE, etc. */
 	RangeVar   *relation;		/* Table or index to reindex */
 	const char *name;			/* name of database to reindex */
 	bool		do_system;		/* include system tables in database case */

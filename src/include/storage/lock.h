@@ -4,7 +4,7 @@
  *	  POSTGRES low-level lock mechanism
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/lock.h
@@ -478,6 +478,7 @@ typedef enum
 extern void InitLocks(void);
 extern LockMethod GetLocksMethodTable(const LOCK *lock);
 extern uint32 LockTagHashCode(const LOCKTAG *locktag);
+extern bool DoLockModesConflict(LOCKMODE mode1, LOCKMODE mode2);
 extern LockAcquireResult LockAcquire(const LOCKTAG *locktag,
 			LOCKMODE lockmode,
 			bool sessionLock,
@@ -532,7 +533,7 @@ extern void lock_twophase_standby_recover(TransactionId xid, uint16 info,
 
 extern DeadLockState DeadLockCheck(PGPROC *proc);
 extern PGPROC *GetBlockingAutoVacuumPgproc(void);
-extern void DeadLockReport(void);
+extern void DeadLockReport(void) __attribute__((noreturn));
 extern void RememberSimpleDeadLock(PGPROC *proc1,
 					   LOCKMODE lockmode,
 					   LOCK *lock,

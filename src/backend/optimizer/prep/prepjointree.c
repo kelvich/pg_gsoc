@@ -12,7 +12,7 @@
  *		reduce_outer_joins
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -608,7 +608,7 @@ pull_up_subqueries(PlannerInfo *root, Node *jtnode)
  *
  * If this jointree node is within either side of an outer join, then
  * lowest_outer_join references the lowest such JoinExpr node; otherwise
- * it is NULL.  We use this to constrain the effects of LATERAL subqueries.
+ * it is NULL.	We use this to constrain the effects of LATERAL subqueries.
  *
  * If this jointree node is within the nullable side of an outer join, then
  * lowest_nulling_outer_join references the lowest such JoinExpr node;
@@ -702,11 +702,11 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 			case JOIN_INNER:
 				j->larg = pull_up_subqueries_recurse(root, j->larg,
 													 lowest_outer_join,
-													 lowest_nulling_outer_join,
+												   lowest_nulling_outer_join,
 													 NULL);
 				j->rarg = pull_up_subqueries_recurse(root, j->rarg,
 													 lowest_outer_join,
-													 lowest_nulling_outer_join,
+												   lowest_nulling_outer_join,
 													 NULL);
 				break;
 			case JOIN_LEFT:
@@ -714,7 +714,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 			case JOIN_ANTI:
 				j->larg = pull_up_subqueries_recurse(root, j->larg,
 													 j,
-													 lowest_nulling_outer_join,
+												   lowest_nulling_outer_join,
 													 NULL);
 				j->rarg = pull_up_subqueries_recurse(root, j->rarg,
 													 j,
@@ -738,7 +738,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 													 NULL);
 				j->rarg = pull_up_subqueries_recurse(root, j->rarg,
 													 j,
-													 lowest_nulling_outer_join,
+												   lowest_nulling_outer_join,
 													 NULL);
 				break;
 			default:
@@ -1080,7 +1080,7 @@ pull_up_simple_union_all(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte)
 
 	/*
 	 * Make a modifiable copy of the subquery's rtable, so we can adjust
-	 * upper-level Vars in it.  There are no such Vars in the setOperations
+	 * upper-level Vars in it.	There are no such Vars in the setOperations
 	 * tree proper, so fixing the rtable should be sufficient.
 	 */
 	rtable = copyObject(subquery->rtable);
@@ -1288,9 +1288,9 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 		return false;
 
 	/*
-	 * Don't pull up if the RTE represents a security-barrier view; we couldn't
-	 * prevent information leakage once the RTE's Vars are scattered about in
-	 * the upper query.
+	 * Don't pull up if the RTE represents a security-barrier view; we
+	 * couldn't prevent information leakage once the RTE's Vars are scattered
+	 * about in the upper query.
 	 */
 	if (rte->security_barrier)
 		return false;
@@ -1304,9 +1304,9 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 */
 	if (rte->lateral && lowest_outer_join != NULL)
 	{
-		Relids	lvarnos = pull_varnos_of_level((Node *) subquery, 1);
-		Relids	jvarnos = get_relids_in_jointree((Node *) lowest_outer_join,
-												 true);
+		Relids		lvarnos = pull_varnos_of_level((Node *) subquery, 1);
+		Relids		jvarnos = get_relids_in_jointree((Node *) lowest_outer_join,
+													 true);
 
 		if (!bms_is_subset(lvarnos, jvarnos))
 			return false;
@@ -1333,15 +1333,16 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 		return false;
 
 	/*
-	 * Hack: don't try to pull up a subquery with an empty jointree.
-	 * query_planner() will correctly generate a Result plan for a jointree
-	 * that's totally empty, but I don't think the right things happen if an
-	 * empty FromExpr appears lower down in a jointree.  It would pose a
-	 * problem for the PlaceHolderVar mechanism too, since we'd have no way to
-	 * identify where to evaluate a PHV coming out of the subquery. Not worth
-	 * working hard on this, just to collapse SubqueryScan/Result into Result;
-	 * especially since the SubqueryScan can often be optimized away by
-	 * setrefs.c anyway.
+	 * Don't pull up a subquery with an empty jointree.  query_planner() will
+	 * correctly generate a Result plan for a jointree that's totally empty,
+	 * but we can't cope with an empty FromExpr appearing lower down in a
+	 * jointree: we identify join rels via baserelid sets, so we couldn't
+	 * distinguish a join containing such a FromExpr from one without it.
+	 * This would for example break the PlaceHolderVar mechanism, since we'd
+	 * have no way to identify where to evaluate a PHV coming out of the
+	 * subquery.  Not worth working hard on this, just to collapse
+	 * SubqueryScan/Result into Result; especially since the SubqueryScan can
+	 * often be optimized away by setrefs.c anyway.
 	 */
 	if (subquery->jointree->fromlist == NIL)
 		return false;
@@ -1478,7 +1479,7 @@ replace_vars_in_jointree(Node *jtnode,
 		/*
 		 * If the RangeTblRef refers to a LATERAL subquery (that isn't the
 		 * same subquery we're pulling up), it might contain references to the
-		 * target subquery, which we must replace.  We drive this from the
+		 * target subquery, which we must replace.	We drive this from the
 		 * jointree scan, rather than a scan of the rtable, for a couple of
 		 * reasons: we can avoid processing no-longer-referenced RTEs, and we
 		 * can use the appropriate setting of need_phvs depending on whether

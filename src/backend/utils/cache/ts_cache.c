@@ -17,7 +17,7 @@
  * any database access.
  *
  *
- * Copyright (c) 2006-2012, PostgreSQL Global Development Group
+ * Copyright (c) 2006-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/cache/ts_cache.c
@@ -484,7 +484,7 @@ lookup_ts_config_cache(Oid cfgId)
 		maprel = heap_open(TSConfigMapRelationId, AccessShareLock);
 		mapidx = index_open(TSConfigMapIndexId, AccessShareLock);
 		mapscan = systable_beginscan_ordered(maprel, mapidx,
-											 SnapshotNow, 1, &mapskey);
+											 NULL, 1, &mapskey);
 
 		while ((maptup = systable_getnext_ordered(mapscan, ForwardScanDirection)) != NULL)
 		{
@@ -642,7 +642,7 @@ check_TSCurrentConfig(char **newval, void **extra, GucSource source)
 		free(*newval);
 		*newval = strdup(buf);
 		pfree(buf);
-		if (!newval)
+		if (!*newval)
 			return false;
 	}
 

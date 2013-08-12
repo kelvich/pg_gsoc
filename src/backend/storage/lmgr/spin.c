@@ -11,7 +11,7 @@
  * is too slow to be very useful :-(
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,9 @@
  */
 #include "postgres.h"
 
+#include "access/xlog.h"
 #include "miscadmin.h"
+#include "replication/walsender.h"
 #include "storage/lwlock.h"
 #include "storage/spin.h"
 
@@ -50,14 +52,22 @@ SpinlockSemas(void)
 int
 SpinlockSemas(void)
 {
+	int			nsemas;
+
 	/*
 	 * It would be cleaner to distribute this logic into the affected modules,
 	 * similar to the way shmem space estimation is handled.
 	 *
-	 * For now, though, we just need a few spinlocks (10 should be plenty)
-	 * plus one for each LWLock and one for each buffer header.
+	 * For now, though, there are few enough users of spinlocks that we just
+	 * keep the knowledge here.
 	 */
-	return NumLWLocks() + NBuffers + 10;
+	nsemas = NumLWLocks();		/* one for each lwlock */
+	nsemas += NBuffers;			/* one for each buffer header */
+	nsemas += max_wal_senders;	/* one for each wal sender process */
+	nsemas += num_xloginsert_slots; /* one for each WAL insertion slot */
+	nsemas += 30;				/* plus a bunch for other small-scale use */
+
+	return nsemas;
 }
 
 /*

@@ -13,7 +13,7 @@
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
- * Copyright (c) 2004-2012, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2013, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -252,7 +252,7 @@ SysLoggerMain(int argc, char *argv[])
 		elog(FATAL, "setsid() failed: %m");
 #endif
 
-	InitializeLatchSupport();		/* needed for latch waits */
+	InitializeLatchSupport();	/* needed for latch waits */
 
 	/* Initialize private latch for use by signal handlers */
 	InitLatch(&sysLoggerLatch);
@@ -583,8 +583,8 @@ SysLogger_Start(void)
 
 	/*
 	 * The initial logfile is created right in the postmaster, to verify that
-	 * the Log_directory is writable.  We save the reference time so that
-	 * the syslogger child process can recompute this file name.
+	 * the Log_directory is writable.  We save the reference time so that the
+	 * syslogger child process can recompute this file name.
 	 *
 	 * It might look a bit strange to re-do this during a syslogger restart,
 	 * but we must do so since the postmaster closed syslogFile after the
@@ -1058,6 +1058,17 @@ pipeThread(void *arg)
 		{
 			bytes_in_logbuffer += bytesRead;
 			process_pipe_input(logbuffer, &bytes_in_logbuffer);
+		}
+
+		/*
+		 * If we've filled the current logfile, nudge the main thread to do a
+		 * log rotation.
+		 */
+		if (Log_RotationSize > 0)
+		{
+			if (ftell(syslogFile) >= Log_RotationSize * 1024L ||
+				(csvlogFile != NULL && ftell(csvlogFile) >= Log_RotationSize * 1024L))
+				SetLatch(&sysLoggerLatch);
 		}
 		LeaveCriticalSection(&sysloggerSection);
 	}

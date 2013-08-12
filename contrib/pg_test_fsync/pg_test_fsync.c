@@ -24,8 +24,8 @@
 #define XLOG_BLCKSZ_K	(XLOG_BLCKSZ / 1024)
 
 #define LABEL_FORMAT		"        %-32s"
-#define NA_FORMAT			"%18s"
-#define OPS_FORMAT			"%9.3f ops/sec (%6.0f microsecs/op)"
+#define NA_FORMAT			"%20s"
+#define OPS_FORMAT			"%11.3f ops/sec  %6.0f usecs/op"
 #define USECS_SEC			1000000
 
 /* These are macros to avoid timing the function call overhead. */
@@ -60,7 +60,7 @@ do { \
 
 static const char *progname;
 
-static int	secs_per_test = 2;
+static int	secs_per_test = 5;
 static int	needs_unlink = 0;
 static char full_buf[XLOG_SEG_SIZE],
 		   *buf,
@@ -101,14 +101,14 @@ main(int argc, char *argv[])
 	handle_args(argc, argv);
 
 	/* Prevent leaving behind the test file */
-	signal(SIGINT, signal_cleanup);
-	signal(SIGTERM, signal_cleanup);
+	pqsignal(SIGINT, signal_cleanup);
+	pqsignal(SIGTERM, signal_cleanup);
 #ifndef WIN32
-	signal(SIGALRM, process_alarm);
+	pqsignal(SIGALRM, process_alarm);
 #endif
 #ifdef SIGHUP
 	/* Not defined on win32 */
-	signal(SIGHUP, signal_cleanup);
+	pqsignal(SIGHUP, signal_cleanup);
 #endif
 
 	prepare_buf();
@@ -146,8 +146,7 @@ handle_args(int argc, char *argv[])
 
 	if (argc > 1)
 	{
-		if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 ||
-			strcmp(argv[1], "-?") == 0)
+		if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-?") == 0)
 		{
 			printf("Usage: %s [-f FILENAME] [-s SECS-PER-TEST]\n", progname);
 			exit(0);
@@ -207,7 +206,7 @@ prepare_buf(void)
 	for (ops = 0; ops < XLOG_SEG_SIZE; ops++)
 		full_buf[ops] = random();
 
-	buf = (char *) TYPEALIGN(ALIGNOF_XLOG_BUFFER, full_buf);
+	buf = (char *) TYPEALIGN(XLOG_BLCKSZ, full_buf);
 }
 
 static void

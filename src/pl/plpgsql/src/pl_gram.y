@@ -3,7 +3,7 @@
  *
  * pl_gram.y			- Parser for the PL/pgSQL procedural language
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -251,10 +251,15 @@ static	List			*read_raise_options(void);
 %token <keyword>	K_CASE
 %token <keyword>	K_CLOSE
 %token <keyword>	K_COLLATE
+%token <keyword>	K_COLUMN
+%token <keyword>	K_COLUMN_NAME
 %token <keyword>	K_CONSTANT
+%token <keyword>	K_CONSTRAINT
+%token <keyword>	K_CONSTRAINT_NAME
 %token <keyword>	K_CONTINUE
 %token <keyword>	K_CURRENT
 %token <keyword>	K_CURSOR
+%token <keyword>	K_DATATYPE
 %token <keyword>	K_DEBUG
 %token <keyword>	K_DECLARE
 %token <keyword>	K_DEFAULT
@@ -298,6 +303,8 @@ static	List			*read_raise_options(void);
 %token <keyword>	K_OPTION
 %token <keyword>	K_OR
 %token <keyword>	K_PERFORM
+%token <keyword>	K_PG_CONTEXT
+%token <keyword>	K_PG_DATATYPE_NAME
 %token <keyword>	K_PG_EXCEPTION_CONTEXT
 %token <keyword>	K_PG_EXCEPTION_DETAIL
 %token <keyword>	K_PG_EXCEPTION_HINT
@@ -311,11 +318,15 @@ static	List			*read_raise_options(void);
 %token <keyword>	K_REVERSE
 %token <keyword>	K_ROWTYPE
 %token <keyword>	K_ROW_COUNT
+%token <keyword>	K_SCHEMA
+%token <keyword>	K_SCHEMA_NAME
 %token <keyword>	K_SCROLL
 %token <keyword>	K_SLICE
 %token <keyword>	K_SQLSTATE
 %token <keyword>	K_STACKED
 %token <keyword>	K_STRICT
+%token <keyword>	K_TABLE
+%token <keyword>	K_TABLE_NAME
 %token <keyword>	K_THEN
 %token <keyword>	K_TO
 %token <keyword>	K_TYPE
@@ -896,13 +907,21 @@ stmt_getdiag	: K_GET getdiag_area_opt K_DIAGNOSTICS getdiag_list ';'
 								case PLPGSQL_GETDIAG_ERROR_DETAIL:
 								case PLPGSQL_GETDIAG_ERROR_HINT:
 								case PLPGSQL_GETDIAG_RETURNED_SQLSTATE:
+								case PLPGSQL_GETDIAG_COLUMN_NAME:
+								case PLPGSQL_GETDIAG_CONSTRAINT_NAME:
+								case PLPGSQL_GETDIAG_DATATYPE_NAME:
 								case PLPGSQL_GETDIAG_MESSAGE_TEXT:
+								case PLPGSQL_GETDIAG_TABLE_NAME:
+								case PLPGSQL_GETDIAG_SCHEMA_NAME:
 									if (!new->is_stacked)
 										ereport(ERROR,
 												(errcode(ERRCODE_SYNTAX_ERROR),
 												 errmsg("diagnostics item %s is not allowed in GET CURRENT DIAGNOSTICS",
 														plpgsql_getdiag_kindname(ditem->kind)),
 												 parser_errposition(@1)));
+									break;
+								/* these fields are allowed in either case */
+								case PLPGSQL_GETDIAG_CONTEXT:
 									break;
 								default:
 									elog(ERROR, "unrecognized diagnostic item kind: %d",
@@ -962,6 +981,9 @@ getdiag_item :
 												K_RESULT_OID, "result_oid"))
 							$$ = PLPGSQL_GETDIAG_RESULT_OID;
 						else if (tok_is_keyword(tok, &yylval,
+												K_PG_CONTEXT, "pg_context"))
+							$$ = PLPGSQL_GETDIAG_CONTEXT;
+						else if (tok_is_keyword(tok, &yylval,
 												K_PG_EXCEPTION_DETAIL, "pg_exception_detail"))
 							$$ = PLPGSQL_GETDIAG_ERROR_DETAIL;
 						else if (tok_is_keyword(tok, &yylval,
@@ -971,8 +993,23 @@ getdiag_item :
 												K_PG_EXCEPTION_CONTEXT, "pg_exception_context"))
 							$$ = PLPGSQL_GETDIAG_ERROR_CONTEXT;
 						else if (tok_is_keyword(tok, &yylval,
+												K_COLUMN_NAME, "column_name"))
+							$$ = PLPGSQL_GETDIAG_COLUMN_NAME;
+						else if (tok_is_keyword(tok, &yylval,
+												K_CONSTRAINT_NAME, "constraint_name"))
+							$$ = PLPGSQL_GETDIAG_CONSTRAINT_NAME;
+						else if (tok_is_keyword(tok, &yylval,
+												K_PG_DATATYPE_NAME, "pg_datatype_name"))
+							$$ = PLPGSQL_GETDIAG_DATATYPE_NAME;
+						else if (tok_is_keyword(tok, &yylval,
 												K_MESSAGE_TEXT, "message_text"))
 							$$ = PLPGSQL_GETDIAG_MESSAGE_TEXT;
+						else if (tok_is_keyword(tok, &yylval,
+												K_TABLE_NAME, "table_name"))
+							$$ = PLPGSQL_GETDIAG_TABLE_NAME;
+						else if (tok_is_keyword(tok, &yylval,
+												K_SCHEMA_NAME, "schema_name"))
+							$$ = PLPGSQL_GETDIAG_SCHEMA_NAME;
 						else if (tok_is_keyword(tok, &yylval,
 												K_RETURNED_SQLSTATE, "returned_sqlstate"))
 							$$ = PLPGSQL_GETDIAG_RETURNED_SQLSTATE;
@@ -2231,9 +2268,14 @@ unreserved_keyword	:
 				| K_ALIAS
 				| K_ARRAY
 				| K_BACKWARD
+				| K_COLUMN
+				| K_COLUMN_NAME
 				| K_CONSTANT
+				| K_CONSTRAINT
+				| K_CONSTRAINT_NAME
 				| K_CURRENT
 				| K_CURSOR
+				| K_DATATYPE
 				| K_DEBUG
 				| K_DETAIL
 				| K_DUMP
@@ -2252,6 +2294,8 @@ unreserved_keyword	:
 				| K_NO
 				| K_NOTICE
 				| K_OPTION
+				| K_PG_CONTEXT
+				| K_PG_DATATYPE_NAME
 				| K_PG_EXCEPTION_CONTEXT
 				| K_PG_EXCEPTION_DETAIL
 				| K_PG_EXCEPTION_HINT
@@ -2263,10 +2307,14 @@ unreserved_keyword	:
 				| K_REVERSE
 				| K_ROW_COUNT
 				| K_ROWTYPE
+				| K_SCHEMA
+				| K_SCHEMA_NAME
 				| K_SCROLL
 				| K_SLICE
 				| K_SQLSTATE
 				| K_STACKED
+				| K_TABLE
+				| K_TABLE_NAME
 				| K_TYPE
 				| K_USE_COLUMN
 				| K_USE_VARIABLE
@@ -3631,6 +3679,21 @@ read_raise_options(void)
 		else if (tok_is_keyword(tok, &yylval,
 								K_HINT, "hint"))
 			opt->opt_type = PLPGSQL_RAISEOPTION_HINT;
+		else if (tok_is_keyword(tok, &yylval,
+								K_COLUMN, "column"))
+			opt->opt_type = PLPGSQL_RAISEOPTION_COLUMN;
+		else if (tok_is_keyword(tok, &yylval,
+								K_CONSTRAINT, "constraint"))
+			opt->opt_type = PLPGSQL_RAISEOPTION_CONSTRAINT;
+		else if (tok_is_keyword(tok, &yylval,
+								K_DATATYPE, "datatype"))
+			opt->opt_type = PLPGSQL_RAISEOPTION_DATATYPE;
+		else if (tok_is_keyword(tok, &yylval,
+								K_TABLE, "table"))
+			opt->opt_type = PLPGSQL_RAISEOPTION_TABLE;
+		else if (tok_is_keyword(tok, &yylval,
+								K_SCHEMA, "schema"))
+			opt->opt_type = PLPGSQL_RAISEOPTION_SCHEMA;
 		else
 			yyerror("unrecognized RAISE statement option");
 

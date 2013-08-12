@@ -4,19 +4,19 @@
  *	  Routines to support bitmapped scans of relations
  *
  * NOTE: it is critical that this plan type only be used with MVCC-compliant
- * snapshots (ie, regular snapshots, not SnapshotNow or one of the other
+ * snapshots (ie, regular snapshots, not SnapshotAny or one of the other
  * special snapshots).	The reason is that since index and heap scans are
  * decoupled, there can be no assurance that the index tuple prompting a
  * visit to a particular heap TID still exists when the visit is made.
  * Therefore the tuple might not exist anymore either (which is OK because
  * heap_fetch will cope) --- but worse, the tuple slot could have been
  * re-used for a newer tuple.  With an MVCC snapshot the newer tuple is
- * certain to fail the time qual and so it will not be mistakenly returned.
- * With SnapshotNow we might return a tuple that doesn't meet the required
- * index qual conditions.
+ * certain to fail the time qual and so it will not be mistakenly returned,
+ * but with anything else we might return a tuple that doesn't meet the
+ * required index qual conditions.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -258,6 +258,7 @@ BitmapHeapNext(BitmapHeapScanState *node)
 
 		scan->rs_ctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lp);
 		scan->rs_ctup.t_len = ItemIdGetLength(lp);
+		scan->rs_ctup.t_tableOid = scan->rs_rd->rd_id;
 		ItemPointerSet(&scan->rs_ctup.t_self, tbmres->blockno, targoffset);
 
 		pgstat_count_heap_fetch(scan->rs_rd);
@@ -587,7 +588,7 @@ ExecInitBitmapHeapScan(BitmapHeapScan *node, EState *estate, int eflags)
 	/*
 	 * open the base relation and acquire appropriate lock on it.
 	 */
-	currentRelation = ExecOpenScanRelation(estate, node->scan.scanrelid);
+	currentRelation = ExecOpenScanRelation(estate, node->scan.scanrelid, eflags);
 
 	scanstate->ss.ss_currentRelation = currentRelation;
 

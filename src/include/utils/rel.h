@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -47,8 +47,8 @@ typedef LockInfoData *LockInfo;
 
 
 /*
- * Cached lookup information for the index access method functions defined
- * by the pg_am row associated with an index relation.
+ * Cached lookup information for the frequently used index access method
+ * functions, defined by the pg_am row associated with an index relation.
  */
 typedef struct RelationAmInfo
 {
@@ -60,13 +60,7 @@ typedef struct RelationAmInfo
 	FmgrInfo	amendscan;
 	FmgrInfo	ammarkpos;
 	FmgrInfo	amrestrpos;
-	FmgrInfo	ambuild;
-	FmgrInfo	ambuildempty;
-	FmgrInfo	ambulkdelete;
-	FmgrInfo	amvacuumcleanup;
 	FmgrInfo	amcanreturn;
-	FmgrInfo	amcostestimate;
-	FmgrInfo	amoptions;
 } RelationAmInfo;
 
 
@@ -90,11 +84,15 @@ typedef struct RelationData
 	/*
 	 * rd_createSubid is the ID of the highest subtransaction the rel has
 	 * survived into; or zero if the rel was not created in the current top
-	 * transaction.  This should be relied on only for optimization purposes;
-	 * it is possible for new-ness to be "forgotten" (eg, after CLUSTER).
-	 * Likewise, rd_newRelfilenodeSubid is the ID of the highest
-	 * subtransaction the relfilenode change has survived into, or zero if not
-	 * changed in the current transaction (or we have forgotten changing it).
+	 * transaction.  This can be now be relied on, whereas previously it could
+	 * be "forgotten" in earlier releases. Likewise, rd_newRelfilenodeSubid is
+	 * the ID of the highest subtransaction the relfilenode change has
+	 * survived into, or zero if not changed in the current transaction (or we
+	 * have forgotten changing it). rd_newRelfilenodeSubid can be forgotten
+	 * when a relation has multiple new relfilenodes within a single
+	 * transaction, with one of them occuring in a subsequently aborted
+	 * subtransaction, e.g. BEGIN; TRUNCATE t; SAVEPOINT save; TRUNCATE t;
+	 * ROLLBACK TO save; -- rd_newRelfilenode is now forgotten
 	 */
 	SubTransactionId rd_createSubid;	/* rel was created in current xact */
 	SubTransactionId rd_newRelfilenodeSubid;	/* new relfilenode assigned in
@@ -105,6 +103,7 @@ typedef struct RelationData
 	Oid			rd_id;			/* relation's object id */
 	List	   *rd_indexlist;	/* list of OIDs of indexes on relation */
 	Bitmapset  *rd_indexattr;	/* identifies columns used in indexes */
+	Bitmapset  *rd_keyattr;		/* cols that can be ref'd by foreign keys */
 	Oid			rd_oidindex;	/* OID of unique index on OID, if any */
 	LockInfoData rd_lockInfo;	/* lock mgr's info for locking relation */
 	RuleLock   *rd_rules;		/* rewrite rules */
@@ -155,6 +154,17 @@ typedef struct RelationData
 	Oid		   *rd_indcollation;	/* OIDs of index collations */
 
 	/*
+	 * foreign-table support
+	 *
+	 * rd_fdwroutine must point to a single memory chunk palloc'd in
+	 * CacheMemoryContext.	It will be freed and reset to NULL on a relcache
+	 * reset.
+	 */
+
+	/* use "struct" here to avoid needing to include fdwapi.h: */
+	struct FdwRoutine *rd_fdwroutine;	/* cached function pointers, or NULL */
+
+	/*
 	 * Hack for CLUSTER, rewriting ALTER TABLE, etc: when writing a new
 	 * version of a table, we need to make any toast pointers inserted into it
 	 * have the existing toast table's OID, not the OID of the transient toast
@@ -198,6 +208,7 @@ typedef struct StdRdOptions
 	int			fillfactor;		/* page fill factor in percent (0..100) */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		security_barrier;		/* for views */
+	int			check_option_offset;	/* for views */
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
@@ -232,6 +243,39 @@ typedef struct StdRdOptions
 #define RelationIsSecurityView(relation)	\
 	((relation)->rd_options ?				\
 	 ((StdRdOptions *) (relation)->rd_options)->security_barrier : false)
+
+/*
+ * RelationHasCheckOption
+ *		Returns true if the relation is a view defined with either the local
+ *		or the cascaded check option.
+ */
+#define RelationHasCheckOption(relation)									\
+	((relation)->rd_options &&												\
+	 ((StdRdOptions *) (relation)->rd_options)->check_option_offset != 0)
+
+/*
+ * RelationHasLocalCheckOption
+ *		Returns true if the relation is a view defined with the local check
+ *		option.
+ */
+#define RelationHasLocalCheckOption(relation)								\
+	((relation)->rd_options &&												\
+	 ((StdRdOptions *) (relation)->rd_options)->check_option_offset != 0 ?	\
+	 strcmp((char *) (relation)->rd_options +								\
+			((StdRdOptions *) (relation)->rd_options)->check_option_offset,	\
+			"local") == 0 : false)
+
+/*
+ * RelationHasCascadedCheckOption
+ *		Returns true if the relation is a view defined with the cascaded check
+ *		option.
+ */
+#define RelationHasCascadedCheckOption(relation)							\
+	((relation)->rd_options &&												\
+	 ((StdRdOptions *) (relation)->rd_options)->check_option_offset != 0 ?	\
+	 strcmp((char *) (relation)->rd_options +								\
+			((StdRdOptions *) (relation)->rd_options)->check_option_offset,	\
+			"cascaded") == 0 : false)
 
 /*
  * RelationIsValid
@@ -384,6 +428,24 @@ typedef struct StdRdOptions
 #define RELATION_IS_OTHER_TEMP(relation) \
 	((relation)->rd_rel->relpersistence == RELPERSISTENCE_TEMP && \
 	 !(relation)->rd_islocaltemp)
+
+
+/*
+ * RelationIsScannable
+ *		Currently can only be false for a materialized view which has not been
+ *		populated by its query.  This is likely to get more complicated later,
+ *		so use a macro which looks like a function.
+ */
+#define RelationIsScannable(relation) ((relation)->rd_rel->relispopulated)
+
+/*
+ * RelationIsPopulated
+ *		Currently, we don't physically distinguish the "populated" and
+ *		"scannable" properties of matviews, but that may change later.
+ *		Hence, use the appropriate one of these macros in code tests.
+ */
+#define RelationIsPopulated(relation) ((relation)->rd_rel->relispopulated)
+
 
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);

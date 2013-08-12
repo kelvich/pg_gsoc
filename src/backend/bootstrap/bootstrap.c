@@ -4,7 +4,7 @@
  *	  routines to support running postgres in 'bootstrap' mode
  *	bootstrap mode is used to create the initial template database
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -34,6 +34,7 @@
 #include "postmaster/walwriter.h"
 #include "replication/walreceiver.h"
 #include "storage/bufmgr.h"
+#include "storage/bufpage.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
@@ -47,6 +48,8 @@
 
 extern int	optind;
 extern char *optarg;
+
+uint32		bootstrap_data_checksum_version = 0;		/* No checksum */
 
 
 #define ALLOC(t, c)		((t *) calloc((unsigned)(c), sizeof(t)))
@@ -64,7 +67,7 @@ static void cleanup(void);
  * ----------------
  */
 
-AuxProcType	MyAuxProcType = NotAnAuxProcess;	/* declared in miscadmin.h */
+AuxProcType MyAuxProcType = NotAnAuxProcess;	/* declared in miscadmin.h */
 
 Relation	boot_reldesc;		/* current relation descriptor */
 
@@ -233,7 +236,7 @@ AuxiliaryProcessMain(int argc, char *argv[])
 	/* If no -x argument, we are a CheckerProcess */
 	MyAuxProcType = CheckerProcess;
 
-	while ((flag = getopt(argc, argv, "B:c:d:D:Fr:x:-:")) != -1)
+	while ((flag = getopt(argc, argv, "B:c:d:D:Fkr:x:-:")) != -1)
 	{
 		switch (flag)
 		{
@@ -258,6 +261,9 @@ AuxiliaryProcessMain(int argc, char *argv[])
 				break;
 			case 'F':
 				SetConfigOption("fsync", "false", PGC_POSTMASTER, PGC_S_ARGV);
+				break;
+			case 'k':
+				bootstrap_data_checksum_version = PG_DATA_CHECKSUM_VERSION;
 				break;
 			case 'r':
 				strlcpy(OutputFileName, optarg, MAXPGPATH);
@@ -359,6 +365,10 @@ AuxiliaryProcessMain(int argc, char *argv[])
 	SetProcessingMode(BootstrapProcessing);
 	IgnoreSystemIndexes = true;
 
+	/* Initialize MaxBackends (if under postmaster, was done already) */
+	if (!IsUnderPostmaster)
+		InitializeMaxBackends();
+
 	BaseInit();
 
 	/*
@@ -379,7 +389,7 @@ AuxiliaryProcessMain(int argc, char *argv[])
 		/*
 		 * Assign the ProcSignalSlot for an auxiliary process.	Since it
 		 * doesn't have a BackendId, the slot is statically allocated based on
-		 * the auxiliary process type (MyAuxProcType).  Backends use slots
+		 * the auxiliary process type (MyAuxProcType).	Backends use slots
 		 * indexed in the range from 1 to MaxBackends (inclusive), so we use
 		 * MaxBackends + AuxProcType + 1 as the index of the slot for an
 		 * auxiliary process.
@@ -601,7 +611,7 @@ boot_openrel(char *relname)
 	{
 		/* We can now load the pg_type data */
 		rel = heap_open(TypeRelationId, NoLock);
-		scan = heap_beginscan(rel, SnapshotNow, 0, NULL);
+		scan = heap_beginscan_catalog(rel, 0, NULL);
 		i = 0;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 			++i;
@@ -610,7 +620,7 @@ boot_openrel(char *relname)
 		while (i-- > 0)
 			*app++ = ALLOC(struct typmap, 1);
 		*app = NULL;
-		scan = heap_beginscan(rel, SnapshotNow, 0, NULL);
+		scan = heap_beginscan_catalog(rel, 0, NULL);
 		app = Typ;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 		{
@@ -908,7 +918,7 @@ gettype(char *type)
 		}
 		elog(DEBUG4, "external type: %s", type);
 		rel = heap_open(TypeRelationId, NoLock);
-		scan = heap_beginscan(rel, SnapshotNow, 0, NULL);
+		scan = heap_beginscan_catalog(rel, 0, NULL);
 		i = 0;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 			++i;
@@ -917,7 +927,7 @@ gettype(char *type)
 		while (i-- > 0)
 			*app++ = ALLOC(struct typmap, 1);
 		*app = NULL;
-		scan = heap_beginscan(rel, SnapshotNow, 0, NULL);
+		scan = heap_beginscan_catalog(rel, 0, NULL);
 		app = Typ;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 		{

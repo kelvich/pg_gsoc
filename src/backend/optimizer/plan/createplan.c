@@ -5,7 +5,7 @@
  *	  Planning is complete, we just need to convert the selected
  *	  Path into a Plan.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,6 +20,7 @@
 #include <math.h>
 
 #include "access/skey.h"
+#include "catalog/pg_class.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -114,8 +115,8 @@ static BitmapHeapScan *make_bitmap_heapscan(List *qptlist,
 static TidScan *make_tidscan(List *qptlist, List *qpqual, Index scanrelid,
 			 List *tidquals);
 static FunctionScan *make_functionscan(List *qptlist, List *qpqual,
-				  Index scanrelid, Node *funcexpr, List *funccolnames,
-				  List *funccoltypes, List *funccoltypmods,
+				  Index scanrelid, Node *funcexpr, bool ordinality,
+                  List *funccolnames, List *funccoltypes, List *funccoltypmods,
 				  List *funccolcollations);
 static ValuesScan *make_valuesscan(List *qptlist, List *qpqual,
 				Index scanrelid, List *values_lists);
@@ -682,13 +683,13 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path)
 	ListCell   *subpaths;
 
 	/*
-	 * It is possible for the subplans list to contain only one entry, or even
-	 * no entries.	Handle these cases specially.
+	 * The subpaths list could be empty, if every child was proven empty by
+	 * constraint exclusion.  In that case generate a dummy plan that returns
+	 * no rows.
 	 *
-	 * XXX ideally, if there's just one entry, we'd not bother to generate an
-	 * Append node but just return the single child.  At the moment this does
-	 * not work because the varno of the child scan plan won't match the
-	 * parent-rel Vars it'll be asked to emit.
+	 * Note that an AppendPath with no members is also generated in certain
+	 * cases where there was no appending construct at all, but we know the
+	 * relation is empty (see set_dummy_rel_pathlist).
 	 */
 	if (best_path->subpaths == NIL)
 	{
@@ -700,13 +701,20 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path)
 									NULL);
 	}
 
-	/* Normal case with multiple subpaths */
+	/* Build the plan for each child */
 	foreach(subpaths, best_path->subpaths)
 	{
 		Path	   *subpath = (Path *) lfirst(subpaths);
 
 		subplans = lappend(subplans, create_plan_recurse(root, subpath));
 	}
+
+	/*
+	 * XXX ideally, if there's just one child, we'd not bother to generate an
+	 * Append node but just return the single child.  At the moment this does
+	 * not work because the varno of the child scan plan won't match the
+	 * parent-rel Vars it'll be asked to emit.
+	 */
 
 	plan = make_append(subplans, tlist);
 
@@ -936,10 +944,12 @@ create_unique_plan(PlannerInfo *root, UniquePath *best_path)
 	if (newitems || best_path->umethod == UNIQUE_PATH_SORT)
 	{
 		/*
-		 * If the top plan node can't do projections, we need to add a Result
-		 * node to help it along.
+		 * If the top plan node can't do projections and its existing target
+		 * list isn't already what we need, we need to add a Result node to
+		 * help it along.
 		 */
-		if (!is_projection_capable_plan(subplan))
+		if (!is_projection_capable_plan(subplan) &&
+			!tlist_same_exprs(newtlist, subplan->targetlist))
 			subplan = (Plan *) make_result(root, newtlist, NULL, subplan);
 		else
 			subplan->targetlist = newtlist;
@@ -1723,6 +1733,7 @@ create_functionscan_plan(PlannerInfo *root, Path *best_path,
 
 	scan_plan = make_functionscan(tlist, scan_clauses, scan_relid,
 								  funcexpr,
+								  rte->funcordinality,
 								  rte->eref->colnames,
 								  rte->funccoltypes,
 								  rte->funccoltypmods,
@@ -3356,6 +3367,7 @@ make_functionscan(List *qptlist,
 				  List *qpqual,
 				  Index scanrelid,
 				  Node *funcexpr,
+				  bool ordinality,
 				  List *funccolnames,
 				  List *funccoltypes,
 				  List *funccoltypmods,
@@ -3371,6 +3383,7 @@ make_functionscan(List *qptlist,
 	plan->righttree = NULL;
 	node->scan.scanrelid = scanrelid;
 	node->funcexpr = funcexpr;
+	node->funcordinality = ordinality;
 	node->funccolnames = funccolnames;
 	node->funccoltypes = funccoltypes;
 	node->funccoltypmods = funccoltypmods;
@@ -4178,6 +4191,9 @@ make_sort_from_groupcols(PlannerInfo *root,
 		SortGroupClause *grpcl = (SortGroupClause *) lfirst(l);
 		TargetEntry *tle = get_tle_by_resno(sub_tlist, grpColIdx[numsortkeys]);
 
+		if (!tle)
+			elog(ERROR, "could not retrive tle for sort-from-groupcols");
+
 		sortColIdx[numsortkeys] = tle->resno;
 		sortOperators[numsortkeys] = grpcl->sortop;
 		collations[numsortkeys] = exprCollation((Node *) tle->expr);
@@ -4689,23 +4705,29 @@ make_result(PlannerInfo *root,
  *	  Build a ModifyTable plan node
  *
  * Currently, we don't charge anything extra for the actual table modification
- * work, nor for the RETURNING expressions if any.	It would only be window
- * dressing, since these are always top-level nodes and there is no way for
- * the costs to change any higher-level planning choices.  But we might want
- * to make it look better sometime.
+ * work, nor for the WITH CHECK OPTIONS or RETURNING expressions if any.  It
+ * would only be window dressing, since these are always top-level nodes and
+ * there is no way for the costs to change any higher-level planning choices.
+ * But we might want to make it look better sometime.
  */
 ModifyTable *
-make_modifytable(CmdType operation, bool canSetTag,
-				 List *resultRelations,
-				 List *subplans, List *returningLists,
+make_modifytable(PlannerInfo *root,
+				 CmdType operation, bool canSetTag,
+				 List *resultRelations, List *subplans,
+				 List *withCheckOptionLists, List *returningLists,
 				 List *rowMarks, int epqParam)
 {
 	ModifyTable *node = makeNode(ModifyTable);
 	Plan	   *plan = &node->plan;
 	double		total_size;
+	List	   *fdw_private_list;
 	ListCell   *subnode;
+	ListCell   *lc;
+	int			i;
 
 	Assert(list_length(resultRelations) == list_length(subplans));
+	Assert(withCheckOptionLists == NIL ||
+		   list_length(resultRelations) == list_length(withCheckOptionLists));
 	Assert(returningLists == NIL ||
 		   list_length(resultRelations) == list_length(returningLists));
 
@@ -4742,9 +4764,57 @@ make_modifytable(CmdType operation, bool canSetTag,
 	node->resultRelations = resultRelations;
 	node->resultRelIndex = -1;	/* will be set correctly in setrefs.c */
 	node->plans = subplans;
+	node->withCheckOptionLists = withCheckOptionLists;
 	node->returningLists = returningLists;
 	node->rowMarks = rowMarks;
 	node->epqParam = epqParam;
+
+	/*
+	 * For each result relation that is a foreign table, allow the FDW to
+	 * construct private plan data, and accumulate it all into a list.
+	 */
+	fdw_private_list = NIL;
+	i = 0;
+	foreach(lc, resultRelations)
+	{
+		Index		rti = lfirst_int(lc);
+		FdwRoutine *fdwroutine;
+		List	   *fdw_private;
+
+		/*
+		 * If possible, we want to get the FdwRoutine from our RelOptInfo for
+		 * the table.  But sometimes we don't have a RelOptInfo and must get
+		 * it the hard way.  (In INSERT, the target relation is not scanned,
+		 * so it's not a baserel; and there are also corner cases for
+		 * updatable views where the target rel isn't a baserel.)
+		 */
+		if (rti < root->simple_rel_array_size &&
+			root->simple_rel_array[rti] != NULL)
+		{
+			RelOptInfo *resultRel = root->simple_rel_array[rti];
+
+			fdwroutine = resultRel->fdwroutine;
+		}
+		else
+		{
+			RangeTblEntry *rte = planner_rt_fetch(rti, root);
+
+			Assert(rte->rtekind == RTE_RELATION);
+			if (rte->relkind == RELKIND_FOREIGN_TABLE)
+				fdwroutine = GetFdwRoutineByRelId(rte->relid);
+			else
+				fdwroutine = NULL;
+		}
+
+		if (fdwroutine != NULL &&
+			fdwroutine->PlanForeignModify != NULL)
+			fdw_private = fdwroutine->PlanForeignModify(root, node, rti, i);
+		else
+			fdw_private = NIL;
+		fdw_private_list = lappend(fdw_private_list, fdw_private);
+		i++;
+	}
+	node->fdwPrivLists = fdw_private_list;
 
 	return node;
 }

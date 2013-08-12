@@ -8,7 +8,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/regress/pg_regress.c
@@ -1969,6 +1969,9 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 	 * default parameters and let them be overwritten by the commandline.
 	 */
 	ifunc();
+
+	if (getenv("PG_REGRESS_DIFF_OPTS"))
+		pretty_diff_opts = getenv("PG_REGRESS_DIFF_OPTS");
 
 	while ((c = getopt_long(argc, argv, "hV", long_options, &option_index)) != -1)
 	{

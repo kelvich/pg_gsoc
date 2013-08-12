@@ -3,7 +3,7 @@
  * aclchk.c
  *	  Routines to check access control permissions.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -25,6 +25,7 @@
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
+#include "catalog/objectaccess.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_conversion.h"
@@ -755,15 +756,16 @@ objectsInSchemaToOids(GrantObjectType objtype, List *nspnames)
 		Oid			namespaceId;
 		List	   *objs;
 
-		namespaceId = LookupExplicitNamespace(nspname);
+		namespaceId = LookupExplicitNamespace(nspname, false);
 
 		switch (objtype)
 		{
 			case ACL_OBJECT_RELATION:
-				/* Process regular tables, views and foreign tables */
 				objs = getRelationsInNamespace(namespaceId, RELKIND_RELATION);
 				objects = list_concat(objects, objs);
 				objs = getRelationsInNamespace(namespaceId, RELKIND_VIEW);
+				objects = list_concat(objects, objs);
+				objs = getRelationsInNamespace(namespaceId, RELKIND_MATVIEW);
 				objects = list_concat(objects, objs);
 				objs = getRelationsInNamespace(namespaceId, RELKIND_FOREIGN_TABLE);
 				objects = list_concat(objects, objs);
@@ -785,7 +787,7 @@ objectsInSchemaToOids(GrantObjectType objtype, List *nspnames)
 								ObjectIdGetDatum(namespaceId));
 
 					rel = heap_open(ProcedureRelationId, AccessShareLock);
-					scan = heap_beginscan(rel, SnapshotNow, 1, key);
+					scan = heap_beginscan_catalog(rel, 1, key);
 
 					while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 					{
@@ -830,7 +832,7 @@ getRelationsInNamespace(Oid namespaceId, char relkind)
 				CharGetDatum(relkind));
 
 	rel = heap_open(RelationRelationId, AccessShareLock);
-	scan = heap_beginscan(rel, SnapshotNow, 2, key);
+	scan = heap_beginscan_catalog(rel, 2, key);
 
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
@@ -1036,27 +1038,26 @@ SetDefaultACLsInSchemas(InternalDefaultACL *iacls, List *nspnames)
 	}
 	else
 	{
-		/* Look up the schema OIDs and do permissions checks */
+		/* Look up the schema OIDs and set permissions for each one */
 		ListCell   *nspcell;
 
 		foreach(nspcell, nspnames)
 		{
 			char	   *nspname = strVal(lfirst(nspcell));
-			AclResult	aclresult;
 
-			/*
-			 * Note that we must do the permissions check against the target
-			 * role not the calling user.  We require CREATE privileges, since
-			 * without CREATE you won't be able to do anything using the
-			 * default privs anyway.
-			 */
 			iacls->nspid = get_namespace_oid(nspname, false);
 
-			aclresult = pg_namespace_aclcheck(iacls->nspid, iacls->roleid,
-											  ACL_CREATE);
-			if (aclresult != ACLCHECK_OK)
-				aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
-							   nspname);
+			/*
+			 * We used to insist that the target role have CREATE privileges
+			 * on the schema, since without that it wouldn't be able to create
+			 * an object for which these default privileges would apply.
+			 * However, this check proved to be more confusing than helpful,
+			 * and it also caused certain database states to not be
+			 * dumpable/restorable, since revoking CREATE doesn't cause
+			 * default privileges for the schema to go away.  So now, we just
+			 * allow the ALTER; if the user lacks CREATE he'll find out when
+			 * he tries to create an object.
+			 */
 
 			SetDefaultACL(iacls);
 		}
@@ -1288,6 +1289,13 @@ SetDefaultACL(InternalDefaultACL *iacls)
 							  iacls->roleid,
 							  noldmembers, oldmembers,
 							  nnewmembers, newmembers);
+
+		if (isNew)
+			InvokeObjectPostCreateHook(DefaultAclRelationId,
+									   HeapTupleGetOid(newtuple), 0);
+		else
+			InvokeObjectPostAlterHook(DefaultAclRelationId,
+									  HeapTupleGetOid(newtuple), 0);
 	}
 
 	if (HeapTupleIsValid(tuple))
@@ -1323,7 +1331,7 @@ RemoveRoleFromObjectACL(Oid roleid, Oid classid, Oid objid)
 					ObjectIdGetDatum(objid));
 
 		scan = systable_beginscan(rel, DefaultAclOidIndexId, true,
-								  SnapshotNow, 1, skey);
+								  NULL, 1, skey);
 
 		tuple = systable_getnext(scan);
 
@@ -1443,7 +1451,7 @@ RemoveDefaultACLById(Oid defaclOid)
 				ObjectIdGetDatum(defaclOid));
 
 	scan = systable_beginscan(rel, DefaultAclOidIndexId, true,
-							  SnapshotNow, 1, skey);
+							  NULL, 1, skey);
 
 	tuple = systable_getnext(scan);
 
@@ -2696,7 +2704,7 @@ ExecGrant_Largeobject(InternalGrant *istmt)
 
 		scan = systable_beginscan(relation,
 								  LargeObjectMetadataOidIndexId, true,
-								  SnapshotNow, 1, entry);
+								  NULL, 1, entry);
 
 		tuple = systable_getnext(scan);
 		if (!HeapTupleIsValid(tuple))
@@ -3409,7 +3417,7 @@ aclcheck_error_col(AclResult aclerr, AclObjectKind objectkind,
 void
 aclcheck_error_type(AclResult aclerr, Oid typeOid)
 {
-	Oid element_type = get_element_type(typeOid);
+	Oid			element_type = get_element_type(typeOid);
 
 	aclcheck_error(aclerr, ACL_KIND_TYPE, format_type_be(element_type ? element_type : typeOid));
 }
@@ -3459,7 +3467,7 @@ pg_aclmask(AclObjectKind objkind, Oid table_oid, AttrNumber attnum, Oid roleid,
 			return pg_language_aclmask(table_oid, roleid, mask, how);
 		case ACL_KIND_LARGEOBJECT:
 			return pg_largeobject_aclmask_snapshot(table_oid, roleid,
-												   mask, how, SnapshotNow);
+												   mask, how, NULL);
 		case ACL_KIND_NAMESPACE:
 			return pg_namespace_aclmask(table_oid, roleid, mask, how);
 		case ACL_KIND_TABLESPACE:
@@ -3847,10 +3855,13 @@ pg_language_aclmask(Oid lang_oid, Oid roleid,
  * Exported routine for examining a user's privileges for a largeobject
  *
  * When a large object is opened for reading, it is opened relative to the
- * caller's snapshot, but when it is opened for writing, it is always relative
- * to SnapshotNow, as documented in doc/src/sgml/lobj.sgml.  This function
- * takes a snapshot argument so that the permissions check can be made relative
- * to the same snapshot that will be used to read the underlying data.
+ * caller's snapshot, but when it is opened for writing, a current
+ * MVCC snapshot will be used.  See doc/src/sgml/lobj.sgml.  This function
+ * takes a snapshot argument so that the permissions check can be made
+ * relative to the same snapshot that will be used to read the underlying
+ * data.  The caller will actually pass NULL for an instantaneous MVCC
+ * snapshot, since all we do with the snapshot argument is pass it through
+ * to systable_beginscan().  
  */
 AclMode
 pg_largeobject_aclmask_snapshot(Oid lobj_oid, Oid roleid,
@@ -4635,7 +4646,7 @@ pg_language_ownercheck(Oid lan_oid, Oid roleid)
  * Ownership check for a largeobject (specified by OID)
  *
  * This is only used for operations like ALTER LARGE OBJECT that are always
- * relative to SnapshotNow.
+ * relative to an up-to-date snapshot.
  */
 bool
 pg_largeobject_ownercheck(Oid lobj_oid, Oid roleid)
@@ -4661,7 +4672,7 @@ pg_largeobject_ownercheck(Oid lobj_oid, Oid roleid)
 
 	scan = systable_beginscan(pg_lo_meta,
 							  LargeObjectMetadataOidIndexId, true,
-							  SnapshotNow, 1, entry);
+							  NULL, 1, entry);
 
 	tuple = systable_getnext(scan);
 	if (!HeapTupleIsValid(tuple))
@@ -5023,7 +5034,7 @@ pg_extension_ownercheck(Oid ext_oid, Oid roleid)
 
 	scan = systable_beginscan(pg_extension,
 							  ExtensionOidIndexId, true,
-							  SnapshotNow, 1, entry);
+							  NULL, 1, entry);
 
 	tuple = systable_getnext(scan);
 	if (!HeapTupleIsValid(tuple))

@@ -4,7 +4,7 @@
  * bootparse.y
  *	  yacc grammar for the "bootstrap" mode (BKI file format)
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -222,7 +222,8 @@ Boot_CreateStmt:
 												   RELKIND_RELATION,
 												   RELPERSISTENCE_PERMANENT,
 												   shared_relation,
-												   mapped_relation);
+												   mapped_relation,
+												   true);
 						elog(DEBUG4, "bootstrap relation created");
 					}
 					else

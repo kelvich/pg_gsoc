@@ -1,10 +1,9 @@
 %{
+/* contrib/cube/cubeparse.y */
+
 /* NdBox = [(lowerleft),(upperright)] */
 /* [(xLL(1)...xLL(N)),(xUR(1)...xUR(n))] */
 
-/* contrib/cube/cubeparse.y */
-
-#define YYPARSE_PARAM result  /* need this to pass a pointer (void *) to yyparse */
 #define YYSTYPE char *
 #define YYDEBUG 1
 
@@ -28,8 +27,8 @@ extern int cube_yylex(void);
 static char *scanbuf;
 static int	scanbuflen;
 
-void cube_yyerror(const char *message);
-int cube_yyparse(void *result);
+extern int	cube_yyparse(NDBOX **result);
+extern void cube_yyerror(NDBOX **result, const char *message);
 
 static int delim_count(char *s, char delim);
 static int check_dim(char *str1, char *str2);
@@ -40,6 +39,7 @@ static NDBOX * write_point_as_box(char *s, int dim, char *typestr);
 %}
 
 /* BISON Declarations */
+%parse-param {NDBOX **result}
 %expect 0
 %name-prefix="cube_yy"
 

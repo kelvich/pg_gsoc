@@ -265,8 +265,9 @@
        </para>
 
        <para>
-        Only the custom archive format is supported with this option.
-        The input file must be a regular file (not, for example, a
+        Only the custom and directory archive formats are supported
+        with this option.
+        The input must be a regular file or directory (not, for example, a
         pipe).  This option is ignored when emitting a script rather
         than connecting directly to a database server.  Also, multiple
         jobs cannot be used together with the
@@ -400,7 +401,8 @@
       <term><option>--table=<replaceable class="parameter">table</replaceable></option></term>
       <listitem>
        <para>
-        Restore definition and/or data of named table only.  This can be
+        Restore definition and/or data of named table only. Multiple tables
+        may be specified with multiple <option>-t</> switches. This can be
         combined with the <option>-n</option> option to specify a schema.
        </para>
       </listitem>

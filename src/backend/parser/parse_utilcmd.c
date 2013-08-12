@@ -16,7 +16,7 @@
  * a quick copyObject() call before manipulating the query tree.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/parse_utilcmd.c
@@ -70,6 +70,7 @@ typedef struct
 	RangeVar   *relation;		/* relation to create */
 	Relation	rel;			/* opened/locked rel, if ALTER */
 	List	   *inhRelations;	/* relations to inherit from */
+	bool		isforeign;		/* true if CREATE/ALTER FOREIGN TABLE */
 	bool		isalter;		/* true if altering existing table */
 	bool		hasoids;		/* does relation have an OID column? */
 	List	   *columns;		/* ColumnDef items */
@@ -132,7 +133,7 @@ static void setSchemaName(char *context_schema, char **stmt_schema_name);
  * will be the transformed CreateStmt, but there may be additional actions
  * to be done before and after the actual DefineRelation() call.
  *
- * SQL92 allows constraints to be scattered all over, so thumb through
+ * SQL allows constraints to be scattered all over, so thumb through
  * the columns and collect all constraints into one place.
  * If there are any implied indices (e.g. UNIQUE or PRIMARY KEY)
  * then expand those into multiple IndexStmt blocks.
@@ -195,9 +196,15 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 
 	cxt.pstate = pstate;
 	if (IsA(stmt, CreateForeignTableStmt))
+	{
 		cxt.stmtType = "CREATE FOREIGN TABLE";
+		cxt.isforeign = true;
+	}
 	else
+	{
 		cxt.stmtType = "CREATE TABLE";
+		cxt.isforeign = false;
+	}
 	cxt.relation = stmt->relation;
 	cxt.rel = NULL;
 	cxt.inhRelations = stmt->inhRelations;
@@ -210,7 +217,7 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	cxt.blist = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
-	cxt.hasoids = interpretOidsOption(stmt->options);
+	cxt.hasoids = interpretOidsOption(stmt->options, true);
 
 	Assert(!stmt->ofTypename || !stmt->inhRelations);	/* grammar enforces */
 
@@ -441,16 +448,9 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 		castnode->typeName = SystemTypeName("regclass");
 		castnode->arg = (Node *) snamenode;
 		castnode->location = -1;
-		funccallnode = makeNode(FuncCall);
-		funccallnode->funcname = SystemFuncName("nextval");
-		funccallnode->args = list_make1(castnode);
-		funccallnode->agg_order = NIL;
-		funccallnode->agg_star = false;
-		funccallnode->agg_distinct = false;
-		funccallnode->func_variadic = false;
-		funccallnode->over = NULL;
-		funccallnode->location = -1;
-
+		funccallnode = makeFuncCall(SystemFuncName("nextval"),
+									list_make1(castnode),
+									-1);
 		constraint = makeNode(Constraint);
 		constraint->contype = CONSTR_DEFAULT;
 		constraint->location = -1;
@@ -515,11 +515,23 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 				break;
 
 			case CONSTR_CHECK:
+				if (cxt->isforeign)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("constraints are not supported on foreign tables"),
+							 parser_errposition(cxt->pstate,
+												constraint->location)));
 				cxt->ckconstraints = lappend(cxt->ckconstraints, constraint);
 				break;
 
 			case CONSTR_PRIMARY:
 			case CONSTR_UNIQUE:
+				if (cxt->isforeign)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("constraints are not supported on foreign tables"),
+							 parser_errposition(cxt->pstate,
+												constraint->location)));
 				if (constraint->keys == NIL)
 					constraint->keys = list_make1(makeString(column->colname));
 				cxt->ixconstraints = lappend(cxt->ixconstraints, constraint);
@@ -531,6 +543,12 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 				break;
 
 			case CONSTR_FOREIGN:
+				if (cxt->isforeign)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("constraints are not supported on foreign tables"),
+							 parser_errposition(cxt->pstate,
+												constraint->location)));
 
 				/*
 				 * Fill in the current attribute's name and throw it into the
@@ -555,8 +573,8 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 	}
 
 	/*
-	 * Generate ALTER FOREIGN TABLE ALTER COLUMN statement which adds
-	 * per-column foreign data wrapper options for this column.
+	 * If needed, generate ALTER FOREIGN TABLE ALTER COLUMN statement to add
+	 * per-column foreign data wrapper options to this column after creation.
 	 */
 	if (column->fdwoptions != NIL)
 	{
@@ -587,6 +605,13 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 static void
 transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 {
+	if (cxt->isforeign)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("constraints are not supported on foreign tables"),
+				 parser_errposition(cxt->pstate,
+									constraint->location)));
+
 	switch (constraint->contype)
 	{
 		case CONSTR_PRIMARY:
@@ -640,17 +665,25 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 	char	   *comment;
 	ParseCallbackState pcbstate;
 
-	setup_parser_errposition_callback(&pcbstate, cxt->pstate, table_like_clause->relation->location);
+	setup_parser_errposition_callback(&pcbstate, cxt->pstate,
+									  table_like_clause->relation->location);
+
+	/* we could support LIKE in many cases, but worry about it another day */
+	if (cxt->isforeign)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("LIKE is not supported for creating foreign tables")));
 
 	relation = relation_openrv(table_like_clause->relation, AccessShareLock);
 
 	if (relation->rd_rel->relkind != RELKIND_RELATION &&
 		relation->rd_rel->relkind != RELKIND_VIEW &&
+		relation->rd_rel->relkind != RELKIND_MATVIEW &&
 		relation->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
 		relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table, view, composite type, or foreign table",
+				 errmsg("\"%s\" is not a table, view, materialized view, composite type, or foreign table",
 						RelationGetRelationName(relation))));
 
 	cancel_parser_errposition_callback(&pcbstate);
@@ -679,7 +712,7 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 	constr = tupleDesc->constr;
 
 	/*
-	 * Initialize column number map for map_variable_attnos().  We need this
+	 * Initialize column number map for map_variable_attnos().	We need this
 	 * since dropped columns in the source table aren't copied, so the new
 	 * table can have different column numbers.
 	 */
@@ -1234,8 +1267,8 @@ generateClonedIndexStmt(CreateStmtContext *cxt, Relation source_idx,
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("cannot convert whole-row table reference"),
-					 errdetail("Index \"%s\" contains a whole-row table reference.",
-							   RelationGetRelationName(source_idx))));
+			  errdetail("Index \"%s\" contains a whole-row table reference.",
+						RelationGetRelationName(source_idx))));
 
 		index->whereClause = pred_tree;
 	}
@@ -1366,8 +1399,8 @@ transformIndexConstraints(CreateStmtContext *cxt)
 	/*
 	 * Scan the index list and remove any redundant index specifications. This
 	 * can happen if, for instance, the user writes UNIQUE PRIMARY KEY. A
-	 * strict reading of SQL92 would suggest raising an error instead, but
-	 * that strikes me as too anal-retentive. - tgl 2001-02-14
+	 * strict reading of SQL would suggest raising an error instead, but that
+	 * strikes me as too anal-retentive. - tgl 2001-02-14
 	 *
 	 * XXX in ALTER TABLE case, it'd be nice to look for duplicate
 	 * pre-existing indexes, too.
@@ -1999,6 +2032,11 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 	 */
 	rel = heap_openrv(stmt->relation, AccessExclusiveLock);
 
+	if (rel->rd_rel->relkind == RELKIND_MATVIEW)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("rules on materialized views are not supported")));
+
 	/* Set up pstate */
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
@@ -2328,7 +2366,16 @@ transformAlterTableStmt(AlterTableStmt *stmt, const char *queryString)
 	pstate->p_sourcetext = queryString;
 
 	cxt.pstate = pstate;
-	cxt.stmtType = "ALTER TABLE";
+	if (stmt->relkind == OBJECT_FOREIGN_TABLE)
+	{
+		cxt.stmtType = "ALTER FOREIGN TABLE";
+		cxt.isforeign = true;
+	}
+	else
+	{
+		cxt.stmtType = "ALTER TABLE";
+		cxt.isforeign = false;
+	}
 	cxt.relation = stmt->relation;
 	cxt.rel = rel;
 	cxt.inhRelations = NIL;
@@ -2638,7 +2685,7 @@ transformColumnType(CreateStmtContext *cxt, ColumnDef *column)
  * that the logic we use for determining forward references is
  * presently quite incomplete.
  *
- * SQL92 also allows constraints to make forward references, so thumb through
+ * SQL also allows constraints to make forward references, so thumb through
  * the table columns and move forward references to a posterior alter-table
  * command.
  *

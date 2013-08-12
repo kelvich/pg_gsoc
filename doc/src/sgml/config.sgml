@@ -39,7 +39,7 @@
      For convenience,
      a different unit can also be specified explicitly.  Valid memory units
      are <literal>kB</literal> (kilobytes), <literal>MB</literal>
-     (megabytes), and <literal>GB</literal> (gigabytes); valid time units
+     (megabytes), <literal>GB</literal> (gigabytes), and <literal>TB</literal> (terabytes); valid time units
      are <literal>ms</literal> (milliseconds), <literal>s</literal>
      (seconds), <literal>min</literal> (minutes), <literal>h</literal>
      (hours), and <literal>d</literal> (days).  Note that the multiplier
@@ -223,7 +223,7 @@ include 'filename'
        <secondary>in configuration file</secondary>
       </indexterm>
         The <filename>postgresql.conf</> file can also contain
-        <firstterm>include_dir directives</>, which specify an entire directory
+        <literal>include_dir</literal> directives, which specify an entire directory
         of configuration files to include.  It is used similarly:
  <programlisting>
  include_dir 'directory'
@@ -234,7 +234,7 @@ include 'filename'
         names end with the suffix <literal>.conf</literal> will be included.  File
         names that start with the <literal>.</literal> character are also excluded,
         to prevent mistakes as they are hidden on some platforms.  Multiple files
-        within an include directory are processed in filename order. The filenames
+        within an include directory are processed in file name order. The file names
         are ordered by C locale rules, ie. numbers before letters, and uppercase
         letters before lowercase ones.
      </para>
@@ -1211,7 +1211,7 @@ include 'filename'
         Specifies the maximum amount of disk space that a session can use
         for temporary files, such as sort and hash temporary files, or the
         storage file for a held cursor.  A transaction attempting to exceed
-        this limit will be cancelled.
+        this limit will be canceled.
         The value is specified in kilobytes, and <literal>-1</> (the
         default) means no limit.
         Only superusers can change this setting.
@@ -1252,66 +1252,6 @@ include 'filename'
        </para>
       </listitem>
      </varlistentry>
-
-     <varlistentry id="guc-shared-preload-libraries" xreflabel="shared_preload_libraries">
-      <term><varname>shared_preload_libraries</varname> (<type>string</type>)</term>
-      <indexterm>
-       <primary><varname>shared_preload_libraries</> configuration parameter</primary>
-      </indexterm>
-      <listitem>
-       <para>
-        This variable specifies one or more shared libraries
-        to be preloaded at server start. For example,
-        <literal>'$libdir/mylib'</literal> would cause
-        <literal>mylib.so</> (or on some platforms,
-        <literal>mylib.sl</>) to be preloaded from the installation's
-        standard library directory.
-        All library names are converted to lower case unless double-quoted.
-        If more than one library is to be loaded, separate their names
-        with commas.  This parameter can only be set at server start.
-       </para>
-
-       <para>
-        <productname>PostgreSQL</productname> procedural language
-        libraries can be preloaded in this way, typically by using the
-        syntax <literal>'$libdir/plXXX'</literal> where
-        <literal>XXX</literal> is <literal>pgsql</>, <literal>perl</>,
-        <literal>tcl</>, or <literal>python</>.
-       </para>
-
-       <para>
-        By preloading a shared library, the library startup time is avoided
-        when the library is first used.  However, the time to start each new
-        server process might increase slightly, even if that process never
-        uses the library.  So this parameter is recommended only for
-        libraries that will be used in most sessions.
-       </para>
-
-     <note>
-      <para>
-        On Windows hosts, preloading a library at server start will not reduce
-        the time required to start each new server process; each server process
-        will re-load all preload libraries.  However, <varname>shared_preload_libraries
-        </varname> is still useful on Windows hosts because some shared libraries may
-        need to perform certain operations that only take place at postmaster start
-        (for example, a shared library may need to reserve lightweight locks
-        or shared memory and you can't do that after the postmaster has started).
-       </para>
-      </note>
-       <para>
-        If a specified library is not found,
-        the server will fail to start.
-       </para>
-
-       <para>
-        Every  PostgreSQL-supported library has a <quote>magic
-        block</> that is checked to guarantee compatibility.
-        For this reason, non-PostgreSQL libraries cannot be
-        loaded in this way.
-       </para>
-      </listitem>
-     </varlistentry>
-
      </variablelist>
     </sect2>
 
@@ -1595,6 +1535,25 @@ include 'filename'
         </para>
        </listitem>
       </varlistentry>
+
+      <varlistentry id="guc-max-worker-processes" xreflabel="max_worker_processes">
+       <term><varname>max_worker_processes</varname> (<type>integer</type>)</term>
+       <indexterm>
+        <primary><varname>max_worker_processes</> configuration parameter</primary>
+       </indexterm>
+       <listitem>
+        <para>
+         Sets the maximum number of background processes that the system
+         can support.  This parameter can only be set at server start.
+        </para>
+
+        <para>
+         When running a standby server, you must set this parameter to the
+         same or higher value than on the master server. Otherwise, queries
+         will not be allowed in the standby server.
+        </para>
+       </listitem>
+      </varlistentry>
      </variablelist>
     </sect2>
    </sect1>
@@ -1603,8 +1562,8 @@ include 'filename'
     <title>Write Ahead Log</title>
 
    <para>
-    See also <xref linkend="wal-configuration"> for details on WAL
-    and checkpoint tuning.
+    For additional information on tuning these settings,
+    see <xref linkend="wal-configuration">.
    </para>
 
     <sect2 id="runtime-config-wal-settings">
@@ -1661,10 +1620,10 @@ include 'filename'
      </varlistentry>
 
      <varlistentry id="guc-fsync" xreflabel="fsync">
+      <term><varname>fsync</varname> (<type>boolean</type>)</term>
       <indexterm>
        <primary><varname>fsync</> configuration parameter</primary>
       </indexterm>
-      <term><varname>fsync</varname> (<type>boolean</type>)</term>
       <listitem>
        <para>
         If this parameter is on, the <productname>PostgreSQL</> server
@@ -1846,10 +1805,10 @@ include 'filename'
      </varlistentry>
 
      <varlistentry id="guc-full-page-writes" xreflabel="full_page_writes">
+      <term><varname>full_page_writes</varname> (<type>boolean</type>)</term>
       <indexterm>
        <primary><varname>full_page_writes</> configuration parameter</primary>
       </indexterm>
-      <term><varname>full_page_writes</varname> (<type>boolean</type>)</term>
       <listitem>
        <para>
         When this parameter is on, the <productname>PostgreSQL</> server
@@ -1949,7 +1908,7 @@ include 'filename'
       </indexterm>
       <listitem>
        <para>
-        <varname>commit_delay</varname> adds a time delay, set in
+        <varname>commit_delay</varname> adds a time delay, measured in
         microseconds, before a WAL flush is initiated.  This can improve
         group commit throughput by allowing a larger number of transactions
         to commit via a single WAL flush, if system load is high enough
@@ -1957,9 +1916,14 @@ include 'filename'
         given interval.  However, it also increases latency by up to
         <varname>commit_delay</varname> microseconds for each WAL
         flush.  Because the delay is just wasted if no other transactions
-        become ready to commit, it is only performed if at least
+        become ready to commit, a delay is only performed if at least
         <varname>commit_siblings</varname> other transactions are active
-        immediately before a flush would otherwise have been initiated.
+        when a flush is about to be initiated.  Also, no delays are
+        performed if <varname>fsync</varname> is disabled.
+        The default <varname>commit_delay</> is zero (no delay).
+        Only superusers can change this setting.
+       </para>
+       <para>
         In <productname>PostgreSQL</> releases prior to 9.3,
         <varname>commit_delay</varname> behaved differently and was much
         less effective: it affected only commits, rather than all WAL flushes,
@@ -1967,8 +1931,7 @@ include 'filename'
         was completed sooner.  Beginning in <productname>PostgreSQL</> 9.3,
         the first process that becomes ready to flush waits for the configured
         interval, while subsequent processes wait only until the leader
-        completes the flush.  The default <varname>commit_delay</> is zero
-        (no delay).
+        completes the flush operation.
        </para>
       </listitem>
      </varlistentry>
@@ -2057,6 +2020,8 @@ include 'filename'
         than this many seconds (which suggests that
         <varname>checkpoint_segments</> ought to be raised).  The default is
         30 seconds (<literal>30s</>).  Zero disables the warning.
+        No warnings will be generated if <varname>checkpoint_timeout</varname>
+        is less than <varname>checkpoint_warning</varname>.
         This parameter can only be set in the <filename>postgresql.conf</>
         file or on the server command line.
        </para>
@@ -2914,6 +2879,7 @@ include 'filename'
      <variablelist>
 
      <varlistentry id="guc-geqo" xreflabel="geqo">
+      <term><varname>geqo</varname> (<type>boolean</type>)</term>
       <indexterm>
        <primary>genetic query optimization</primary>
       </indexterm>
@@ -2924,7 +2890,6 @@ include 'filename'
       <indexterm>
        <primary><varname>geqo</> configuration parameter</primary>
       </indexterm>
-      <term><varname>geqo</varname> (<type>boolean</type>)</term>
       <listitem>
        <para>
         Enables or disables genetic query optimization.
@@ -3352,7 +3317,7 @@ local0.*    /var/log/postgresql
        <para>
         When <varname>logging_collector</varname> is enabled,
         this parameter sets the file names of the created log files.  The value
-        is treated as a <systemitem>strftime</systemitem> pattern,
+        is treated as a <function>strftime</function> pattern,
         so <literal>%</literal>-escapes can be used to specify time-varying
         file names.  (Note that if there are
         any time-zone-dependent <literal>%</literal>-escapes, the computation
@@ -4966,6 +4931,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
      </varlistentry>
 
      <varlistentry id="guc-default-transaction-isolation" xreflabel="default_transaction_isolation">
+      <term><varname>default_transaction_isolation</varname> (<type>enum</type>)</term>
       <indexterm>
        <primary>transaction isolation level</primary>
        <secondary>setting default</secondary>
@@ -4973,7 +4939,6 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       <indexterm>
        <primary><varname>default_transaction_isolation</> configuration parameter</primary>
       </indexterm>
-      <term><varname>default_transaction_isolation</varname> (<type>enum</type>)</term>
       <listitem>
        <para>
         Each SQL transaction has an isolation level, which can be
@@ -4992,6 +4957,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
      </varlistentry>
 
      <varlistentry id="guc-default-transaction-read-only" xreflabel="default_transaction_read_only">
+      <term><varname>default_transaction_read_only</varname> (<type>boolean</type>)</term>
       <indexterm>
        <primary>read-only transaction</primary>
        <secondary>setting default</secondary>
@@ -4999,8 +4965,6 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       <indexterm>
        <primary><varname>default_transaction_read_only</> configuration parameter</primary>
       </indexterm>
-
-      <term><varname>default_transaction_read_only</varname> (<type>boolean</type>)</term>
       <listitem>
        <para>
         A read-only SQL transaction cannot alter non-temporary tables.
@@ -5015,6 +4979,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
      </varlistentry>
 
      <varlistentry id="guc-default-transaction-deferrable" xreflabel="default_transaction_deferrable">
+      <term><varname>default_transaction_deferrable</varname> (<type>boolean</type>)</term>
       <indexterm>
        <primary>deferrable transaction</primary>
        <secondary>setting default</secondary>
@@ -5022,8 +4987,6 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       <indexterm>
        <primary><varname>default_transaction_deferrable</> configuration parameter</primary>
       </indexterm>
-
-      <term><varname>default_transaction_deferrable</varname> (<type>boolean</type>)</term>
       <listitem>
        <para>
         When running at the <literal>serializable</> isolation level,
@@ -5074,7 +5037,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </indexterm>
       <listitem>
        <para>
-        Abort any statement that takes over the specified number of
+        Abort any statement that takes more than the specified number of
         milliseconds, starting from the time the command arrives at the server
         from the client.  If <varname>log_min_error_statement</> is set to
         <literal>ERROR</> or lower, the statement that timed out will also be
@@ -5083,8 +5046,42 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
 
        <para>
         Setting <varname>statement_timeout</> in
-        <filename>postgresql.conf</> is not recommended because it
-        affects all sessions.
+        <filename>postgresql.conf</> is not recommended because it would
+        affect all sessions.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-lock-timeout" xreflabel="lock_timeout">
+      <term><varname>lock_timeout</varname> (<type>integer</type>)</term>
+      <indexterm>
+       <primary><varname>lock_timeout</> configuration parameter</primary>
+      </indexterm>
+      <listitem>
+       <para>
+        Abort any statement that waits longer than the specified number of
+        milliseconds while attempting to acquire a lock on a table, index,
+        row, or other database object.  The time limit applies separately to
+        each lock acquisition attempt.  The limit applies both to explicit
+        locking requests (such as <command>LOCK TABLE</>, or <command>SELECT
+        FOR UPDATE</> without <literal>NOWAIT</>) and to implicitly-acquired
+        locks.  If <varname>log_min_error_statement</> is set to
+        <literal>ERROR</> or lower, the statement that timed out will be
+        logged.  A value of zero (the default) turns this off.
+       </para>
+
+       <para>
+        Unlike <varname>statement_timeout</>, this timeout can only occur
+        while waiting for locks.  Note that if <varname>statement_timeout</>
+        is nonzero, it is rather pointless to set <varname>lock_timeout</> to
+        the same or larger value, since the statement timeout would always
+        trigger first.
+       </para>
+
+       <para>
+        Setting <varname>lock_timeout</> in
+        <filename>postgresql.conf</> is not recommended because it would
+        affect all sessions.
        </para>
       </listitem>
      </varlistentry>
@@ -5307,6 +5304,7 @@ SET XML OPTION { DOCUMENT | CONTENT };
      </varlistentry>
 
      <varlistentry id="guc-extra-float-digits" xreflabel="extra_float_digits">
+      <term><varname>extra_float_digits</varname> (<type>integer</type>)</term>
       <indexterm>
        <primary>significant digits</primary>
       </indexterm>
@@ -5317,8 +5315,6 @@ SET XML OPTION { DOCUMENT | CONTENT };
       <indexterm>
        <primary><varname>extra_float_digits</> configuration parameter</primary>
       </indexterm>
-
-      <term><varname>extra_float_digits</varname> (<type>integer</type>)</term>
       <listitem>
        <para>
         This parameter adjusts the number of digits displayed for
@@ -5329,6 +5325,7 @@ SET XML OPTION { DOCUMENT | CONTENT };
         partially-significant digits; this is especially useful for dumping
         float data that needs to be restored exactly.  Or it can be set
         negative to suppress unwanted digits.
+        See also <xref linkend="datatype-float">.
        </para>
       </listitem>
      </varlistentry>
@@ -5457,6 +5454,171 @@ SET XML OPTION { DOCUMENT | CONTENT };
      </variablelist>
 
     </sect2>
+
+    <sect2 id="runtime-config-client-preload">
+     <title>Shared Library Preloading</title>
+
+     <para>
+      Several settings are available for preloading shared libraries into the
+      server, in order to load additional functionality or achieve performance
+      benefits.  For example, a setting of
+      <literal>'$libdir/mylib'</literal> would cause
+      <literal>mylib.so</> (or on some platforms,
+      <literal>mylib.sl</>) to be preloaded from the installation's standard
+      library directory.  The differences between the settings are when they
+      take effect and what privileges are required to change them.
+     </para>
+
+     <para>
+      <productname>PostgreSQL</productname> procedural language libraries can
+      be preloaded in this way, typically by using the
+      syntax <literal>'$libdir/plXXX'</literal> where
+      <literal>XXX</literal> is <literal>pgsql</>, <literal>perl</>,
+      <literal>tcl</>, or <literal>python</>.
+     </para>
+
+     <para>
+      For each parameter, if more than one library is to be loaded, separate
+      their names with commas.  All library names are converted to lower case
+      unless double-quoted.
+     </para>
+
+     <para>
+      Only shared libraries specifically intended to be used with PostgreSQL
+      can be loaded this way.  Every PostgreSQL-supported library has
+      a <quote>magic block</> that is checked to guarantee compatibility.  For
+      this reason, non-PostgreSQL libraries cannot be loaded in this way.  You
+      might be able to use operating-system facilities such
+      as <envar>LD_PRELOAD</envar> for that.
+     </para>
+
+     <para>
+      In general, refer to the documentation of a specific module for the
+      recommended way to load that module.
+     </para>
+
+     <variablelist>
+     <varlistentry id="guc-local-preload-libraries" xreflabel="local_preload_libraries">
+      <term><varname>local_preload_libraries</varname> (<type>string</type>)</term>
+      <indexterm>
+       <primary><varname>local_preload_libraries</> configuration parameter</primary>
+      </indexterm>
+      <indexterm>
+       <primary><filename>$libdir/plugins</></primary>
+      </indexterm>
+      <listitem>
+       <para>
+        This variable specifies one or more shared libraries that are to be
+        preloaded at connection start.  This parameter cannot be changed after
+        the start of a particular session.  If a specified library is not
+        found, the connection attempt will fail.
+       </para>
+
+       <para>
+        This option can be set by any user.  Because of that, the libraries
+        that can be loaded are restricted to those appearing in the
+        <filename>plugins</> subdirectory of the installation's
+        standard library directory.  (It is the database administrator's
+        responsibility to ensure that only <quote>safe</> libraries
+        are installed there.)  Entries in <varname>local_preload_libraries</>
+        can specify this directory explicitly, for example
+        <literal>$libdir/plugins/mylib</literal>, or just specify
+        the library name &mdash; <literal>mylib</literal> would have
+        the same effect as <literal>$libdir/plugins/mylib</literal>.
+       </para>
+
+       <para>
+        Unless a module is specifically designed to be used in this way by
+        non-superusers, this is usually not the right setting to use.  Look
+        at <xref linkend="guc-session-preload-libraries"> instead.
+       </para>
+      </listitem>
+     </varlistentry>
+
+
+     <varlistentry id="guc-session-preload-libraries" xreflabel="session_preload_libraries">
+      <term><varname>session_preload_libraries</varname> (<type>string</type>)</term>
+      <indexterm>
+       <primary><varname>session_preload_libraries</> configuration parameter</primary>
+      </indexterm>
+      <listitem>
+       <para>
+        This variable specifies one or more shared libraries that are to be
+        preloaded at connection start.  Only superusers can change this setting.
+        The parameter value only takes effect at the start of the connection.
+        Subsequent changes have no effect.  If a specified library is not
+        found, the connection attempt will fail.
+       </para>
+
+       <para>
+        The intent of this feature is to allow debugging or
+        performance-measurement libraries to be loaded into specific sessions
+        without an explicit
+        <command>LOAD</> command being given.  For
+        example, <xref linkend="auto-explain"> could be enabled for all
+        sessions under a given user name by setting this parameter
+        with <command>ALTER ROLE SET</>.  Also, this parameter can be changed
+        without restarting the server (but changes only take effect when a new
+        session is started), so it is easier to add new modules this way, even
+        if they should apply to all sessions.
+       </para>
+
+       <para>
+        Unlike <xref linkend="guc-shared-preload-libraries">, there is no large
+        performance advantage to loading a library at session start rather than
+        when it is first used.  There is some advantage, however, when
+        connection pooling is used.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-shared-preload-libraries" xreflabel="shared_preload_libraries">
+      <term><varname>shared_preload_libraries</varname> (<type>string</type>)</term>
+      <indexterm>
+       <primary><varname>shared_preload_libraries</> configuration parameter</primary>
+      </indexterm>
+      <listitem>
+       <para>
+        This variable specifies one or more shared libraries to be preloaded at
+        server start.  with commas.  This parameter can only be set at server
+        start.  If a specified library is not found, the server will fail to
+        start.
+       </para>
+
+       <para>
+        Some libraries need to perform certain operations that can only take
+        place at postmaster start, such as allocating shared memory, reserving
+        light-weight locks, or starting background workers.  Those libraries
+        must be loaded at server start through this parameter.  See the
+        documentation of each library for details.
+       </para>
+
+       <para>
+        Other libraries can also be preloaded.  By preloading a shared library,
+        the library startup time is avoided when the library is first used.
+        However, the time to start each new server process might increase
+        slightly, even if that process never uses the library.  So this
+        parameter is recommended only for libraries that will be used in most
+        sessions.  Also, changing this parameter requires a server restart, so
+        this is not the right setting to use for short-term debugging tasks,
+        say.  Use <xref linkend="guc-session-preload-libraries"> for that
+        instead.
+       </para>
+
+      <note>
+       <para>
+        On Windows hosts, preloading a library at server start will not reduce
+        the time required to start each new server process; each server process
+        will re-load all preload libraries.  However, <varname>shared_preload_libraries
+        </varname> is still useful on Windows hosts for libraries that need to
+        perform operations at postmaster start time..
+       </para>
+      </note>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+   </sect2>
+
      <sect2 id="runtime-config-client-other">
      <title>Other Defaults</title>
 
@@ -5528,62 +5690,6 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-local-preload-libraries" xreflabel="local_preload_libraries">
-      <term><varname>local_preload_libraries</varname> (<type>string</type>)</term>
-      <indexterm>
-       <primary><varname>local_preload_libraries</> configuration parameter</primary>
-      </indexterm>
-      <indexterm>
-       <primary><filename>$libdir/plugins</></primary>
-      </indexterm>
-      <listitem>
-       <para>
-        This variable specifies one or more shared libraries that are
-        to be preloaded at connection start.  If more than one library
-        is to be loaded, separate their names with commas.  All library
-        names are converted to lower case unless double-quoted.
-        This parameter cannot be changed after the start of a particular
-        session.
-       </para>
-
-       <para>
-        Because this is not a superuser-only option, the libraries
-        that can be loaded are restricted to those appearing in the
-        <filename>plugins</> subdirectory of the installation's
-        standard library directory.  (It is the database administrator's
-        responsibility to ensure that only <quote>safe</> libraries
-        are installed there.)  Entries in <varname>local_preload_libraries</>
-        can specify this directory explicitly, for example
-        <literal>$libdir/plugins/mylib</literal>, or just specify
-        the library name &mdash; <literal>mylib</literal> would have
-        the same effect as <literal>$libdir/plugins/mylib</literal>.
-       </para>
-
-       <para>
-        Unlike <xref linkend="guc-shared-preload-libraries">, there is no
-        performance advantage to loading a library at session
-        start rather than when it is first used.  Rather, the intent of
-        this feature is to allow debugging or performance-measurement
-        libraries to be loaded into specific sessions without an explicit
-        <command>LOAD</> command being given.  For example, debugging could
-        be enabled for all sessions under a given user name by setting
-        this parameter with <command>ALTER ROLE SET</>.
-       </para>
-
-       <para>
-        If a specified library is not found,
-        the connection attempt will fail.
-       </para>
-
-       <para>
-        Every  PostgreSQL-supported library has a <quote>magic
-        block</> that is checked to guarantee compatibility.
-        For this reason, non-PostgreSQL libraries cannot be
-        loaded in this way.
-       </para>
-      </listitem>
-     </varlistentry>
-
      </variablelist>
     </sect2>
    </sect1>
@@ -5594,6 +5700,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
      <variablelist>
 
      <varlistentry id="guc-deadlock-timeout" xreflabel="deadlock_timeout">
+      <term><varname>deadlock_timeout</varname> (<type>integer</type>)</term>
       <indexterm>
        <primary>deadlock</primary>
        <secondary>timeout during</secondary>
@@ -5605,8 +5712,6 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       <indexterm>
        <primary><varname>deadlock_timeout</> configuration parameter</primary>
       </indexterm>
-
-      <term><varname>deadlock_timeout</varname> (<type>integer</type>)</term>
       <listitem>
        <para>
         This is the amount of time, in milliseconds, to wait on a lock
@@ -6588,6 +6693,30 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         only available if the <symbol>WAL_DEBUG</symbol> macro was
         defined when <productname>PostgreSQL</productname> was
         compiled.
+       </para>
+      </listitem>
+     </varlistentry>
+
+    <varlistentry id="guc-ignore-checksum-failure" xreflabel="ignore_checksum_failure">
+      <term><varname>ignore_checksum_failure</varname> (<type>boolean</type>)</term>
+      <indexterm>
+       <primary><varname>ignore_checksum_failure</> configuration parameter</primary>
+      </indexterm>
+      <listitem>
+       <para>
+        Only has effect if <xref linkend="app-initdb-data-checksums"> are enabled.
+       </para>
+       <para>
+        Detection of a checksum failure during a read normally causes
+        <productname>PostgreSQL</> to report an error, aborting the current
+        transaction.  Setting <varname>ignore_checksum_failure</> to on causes
+        the system to ignore the failure (but still report a warning), and
+        continue processing.  This behavior may <emphasis>cause crashes, propagate
+        or hide corruption, or other serious problems</>.  However, it may allow
+        you to get past the error and retrieve undamaged tuples that might still be
+        present in the table if the block header is still sane. If the header is
+        corrupt an error will be reported even if this option is enabled. The
+        default setting is <literal>off</>, and it can only be changed by a superuser.
        </para>
       </listitem>
      </varlistentry>

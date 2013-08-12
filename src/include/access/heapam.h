@@ -4,7 +4,7 @@
  *	  POSTGRES heap access method definitions.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/heapam.h
@@ -30,11 +30,22 @@
 
 typedef struct BulkInsertStateData *BulkInsertState;
 
-typedef enum
+/*
+ * Possible lock modes for a tuple.
+ */
+typedef enum LockTupleMode
 {
-	LockTupleShared,
+	/* SELECT FOR KEY SHARE */
+	LockTupleKeyShare,
+	/* SELECT FOR SHARE */
+	LockTupleShare,
+	/* SELECT FOR NO KEY UPDATE, and UPDATEs that don't modify key columns */
+	LockTupleNoKeyExclusive,
+	/* SELECT FOR UPDATE, UPDATEs that modify key columns, and DELETE */
 	LockTupleExclusive
 } LockTupleMode;
+
+#define MaxLockTupleMode	LockTupleExclusive
 
 /*
  * When heap_update, heap_delete, or heap_lock_tuple fail because the target
@@ -48,15 +59,15 @@ typedef enum
  * replacement is really a match.
  * cmax is the outdating command's CID, but only when the failure code is
  * HeapTupleSelfUpdated (i.e., something in the current transaction outdated
- * the tuple); otherwise cmax is zero.  (We make this restriction because
+ * the tuple); otherwise cmax is zero.	(We make this restriction because
  * HeapTupleHeaderGetCmax doesn't work for tuples outdated in other
  * transactions.)
  */
 typedef struct HeapUpdateFailureData
 {
-	ItemPointerData		ctid;
-	TransactionId		xmax;
-	CommandId			cmax;
+	ItemPointerData ctid;
+	TransactionId xmax;
+	CommandId	cmax;
 } HeapUpdateFailureData;
 
 
@@ -94,6 +105,8 @@ typedef struct HeapScanDescData *HeapScanDesc;
 
 extern HeapScanDesc heap_beginscan(Relation relation, Snapshot snapshot,
 			   int nkeys, ScanKey key);
+extern HeapScanDesc heap_beginscan_catalog(Relation relation, int nkeys,
+			   ScanKey key);
 extern HeapScanDesc heap_beginscan_strat(Relation relation, Snapshot snapshot,
 					 int nkeys, ScanKey key,
 					 bool allow_strat, bool allow_sync);
@@ -129,14 +142,16 @@ extern HTSU_Result heap_delete(Relation relation, ItemPointer tid,
 extern HTSU_Result heap_update(Relation relation, ItemPointer otid,
 			HeapTuple newtup,
 			CommandId cid, Snapshot crosscheck, bool wait,
-			HeapUpdateFailureData *hufd);
+			HeapUpdateFailureData *hufd, LockTupleMode *lockmode);
 extern HTSU_Result heap_lock_tuple(Relation relation, HeapTuple tuple,
 				CommandId cid, LockTupleMode mode, bool nowait,
+				bool follow_update,
 				Buffer *buffer, HeapUpdateFailureData *hufd);
 extern void heap_inplace_update(Relation relation, HeapTuple tuple);
-extern bool heap_freeze_tuple(HeapTupleHeader tuple, TransactionId cutoff_xid);
+extern bool heap_freeze_tuple(HeapTupleHeader tuple, TransactionId cutoff_xid,
+				  TransactionId cutoff_multi);
 extern bool heap_tuple_needs_freeze(HeapTupleHeader tuple, TransactionId cutoff_xid,
-						Buffer buf);
+						MultiXactId cutoff_multi, Buffer buf);
 
 extern Oid	simple_heap_insert(Relation relation, HeapTuple tup);
 extern void simple_heap_delete(Relation relation, ItemPointer tid);

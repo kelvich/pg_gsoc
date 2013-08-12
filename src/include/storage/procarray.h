@@ -4,7 +4,7 @@
  *	  POSTGRES process array definitions.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/procarray.h
@@ -26,6 +26,7 @@ extern void ProcArrayRemove(PGPROC *proc, TransactionId latestXid);
 extern void ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid);
 extern void ProcArrayClearTransaction(PGPROC *proc);
 
+extern void ProcArrayInitRecovery(TransactionId initializedUptoXID);
 extern void ProcArrayApplyRecoveryInfo(RunningTransactions running);
 extern void ProcArrayApplyXidAssignment(TransactionId topxid,
 							int nsubxids, TransactionId *subxids);

@@ -3,7 +3,7 @@
  * rewriteSupport.c
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -41,8 +41,7 @@ IsDefinedRewriteRule(Oid owningRel, const char *ruleName)
 
 /*
  * SetRelationRuleStatus
- *		Set the value of the relation's relhasrules field in pg_class;
- *		if the relation is becoming a view, also adjust its relkind.
+ *		Set the value of the relation's relhasrules field in pg_class.
  *
  * NOTE: caller must be holding an appropriate lock on the relation.
  *
@@ -53,8 +52,7 @@ IsDefinedRewriteRule(Oid owningRel, const char *ruleName)
  * row.
  */
 void
-SetRelationRuleStatus(Oid relationId, bool relHasRules,
-					  bool relIsBecomingView)
+SetRelationRuleStatus(Oid relationId, bool relHasRules)
 {
 	Relation	relationRelation;
 	HeapTuple	tuple;
@@ -69,13 +67,10 @@ SetRelationRuleStatus(Oid relationId, bool relHasRules,
 		elog(ERROR, "cache lookup failed for relation %u", relationId);
 	classForm = (Form_pg_class) GETSTRUCT(tuple);
 
-	if (classForm->relhasrules != relHasRules ||
-		(relIsBecomingView && classForm->relkind != RELKIND_VIEW))
+	if (classForm->relhasrules != relHasRules)
 	{
 		/* Do the update */
 		classForm->relhasrules = relHasRules;
-		if (relIsBecomingView)
-			classForm->relkind = RELKIND_VIEW;
 
 		simple_heap_update(relationRelation, &tuple->t_self, tuple);
 
@@ -148,7 +143,7 @@ get_rewrite_oid_without_relid(const char *rulename,
 				CStringGetDatum(rulename));
 
 	RewriteRelation = heap_open(RewriteRelationId, AccessShareLock);
-	scanDesc = heap_beginscan(RewriteRelation, SnapshotNow, 1, &scanKeyData);
+	scanDesc = heap_beginscan_catalog(RewriteRelation, 1, &scanKeyData);
 
 	htup = heap_getnext(scanDesc, ForwardScanDirection);
 	if (!HeapTupleIsValid(htup))

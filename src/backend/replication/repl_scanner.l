@@ -4,7 +4,7 @@
  * repl_scanner.l
  *	  a lexical scanner for the replication commands
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,7 +19,13 @@
 
 /* Avoid exit() on fatal scanner errors (a bit ugly -- see yy_fatal_error) */
 #undef fprintf
-#define fprintf(file, fmt, msg)  ereport(ERROR, (errmsg_internal("%s", msg)))
+#define fprintf(file, fmt, msg)  fprintf_to_ereport(fmt, msg)
+
+static void
+fprintf_to_ereport(const char *fmt, const char *msg)
+{
+	ereport(ERROR, (errmsg_internal("%s", msg)));
+}
 
 /* Handle to the buffer that the lexer uses internally */
 static YY_BUFFER_STATE scanbufhandle;
@@ -146,7 +152,7 @@ addlitchar(unsigned char ychar)
 	appendStringInfoChar(&litbuf, ychar);
 }
 
-void
+void __attribute__((noreturn))
 yyerror(const char *message)
 {
 	ereport(ERROR,

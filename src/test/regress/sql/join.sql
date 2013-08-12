@@ -749,6 +749,23 @@ select b.unique1 from
   right join int4_tbl i2 on i2.f1 = b.tenthous
   order by 1;
 
+explain (costs off)
+select * from
+(
+  select unique1, q1, coalesce(unique1, -1) + q1 as fault
+  from int8_tbl left join tenk1 on (q2 = unique2)
+) ss
+where fault = 122
+order by fault;
+
+select * from
+(
+  select unique1, q1, coalesce(unique1, -1) + q1 as fault
+  from int8_tbl left join tenk1 on (q2 = unique2)
+) ss
+where fault = 122
+order by fault;
+
 --
 -- test handling of potential equivalence clauses above outer joins
 --
@@ -901,12 +918,15 @@ explain (costs off)
 select *, (select r from (select q1 as q2) x, (select q2 as r) y) from int8_tbl;
 select *, (select r from (select q1 as q2) x, lateral (select q2 as r) y) from int8_tbl;
 
--- lateral SRF
+-- lateral with function in FROM
 select count(*) from tenk1 a, lateral generate_series(1,two) g;
 explain (costs off)
   select count(*) from tenk1 a, lateral generate_series(1,two) g;
 explain (costs off)
   select count(*) from tenk1 a cross join lateral generate_series(1,two) g;
+-- don't need the explicit LATERAL keyword for functions
+explain (costs off)
+  select count(*) from tenk1 a, generate_series(1,two) g;
 
 -- lateral with UNION ALL subselect
 explain (costs off)
@@ -987,10 +1007,10 @@ select * from
   lateral (select ss2.y) ss3;
 
 -- test some error cases where LATERAL should have been used but wasn't
-select f1,g from int4_tbl a, generate_series(0, f1) g;
-select f1,g from int4_tbl a, generate_series(0, a.f1) g;
-select f1,g from int4_tbl a cross join generate_series(0, f1) g;
-select f1,g from int4_tbl a cross join generate_series(0, a.f1) g;
+select f1,g from int4_tbl a, (select f1 as g) ss;
+select f1,g from int4_tbl a, (select a.f1 as g) ss;
+select f1,g from int4_tbl a cross join (select f1 as g) ss;
+select f1,g from int4_tbl a cross join (select a.f1 as g) ss;
 -- SQL:2008 says the left table is in scope but illegal to access here
 select f1,g from int4_tbl a right join lateral generate_series(0, a.f1) g on true;
 select f1,g from int4_tbl a full join lateral generate_series(0, a.f1) g on true;

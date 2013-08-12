@@ -3,7 +3,7 @@
  * explain.c
  *	  Explain query execution plans
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * IDENTIFICATION
@@ -90,6 +90,7 @@ static void ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
 static void ExplainScanTarget(Scan *plan, ExplainState *es);
 static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
+static void show_modifytable_info(ModifyTableState *mtstate, ExplainState *es);
 static void ExplainMemberNodes(List *plans, PlanState **planstates,
 				   List *ancestors, ExplainState *es);
 static void ExplainSubPlans(List *plans, List *ancestors,
@@ -413,6 +414,10 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	if (es->buffers)
 		instrument_option |= INSTRUMENT_BUFFERS;
 
+	/*
+	 * We always collect timing for the entire statement, even when node-level
+	 * timing is off, so we don't look at es->timing here.
+	 */
 	INSTR_TIME_SET_CURRENT(starttime);
 
 	/*
@@ -653,9 +658,9 @@ elapsed_time(instr_time *starttime)
  *	  Prescan the planstate tree to identify which RTEs are referenced
  *
  * Adds the relid of each referenced RTE to *rels_used.  The result controls
- * which RTEs are assigned aliases by select_rtable_names_for_explain.	This
- * ensures that we don't confusingly assign un-suffixed aliases to RTEs that
- * never appear in the EXPLAIN output (such as inheritance parents).
+ * which RTEs are assigned aliases by select_rtable_names_for_explain.
+ * This ensures that we don't confusingly assign un-suffixed aliases to RTEs
+ * that never appear in the EXPLAIN output (such as inheritance parents).
  */
 static void
 ExplainPreScanNode(PlanState *planstate, Bitmapset **rels_used)
@@ -1346,6 +1351,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			break;
+		case T_ModifyTable:
+			show_modifytable_info((ModifyTableState *) planstate, es);
+			break;
 		case T_Hash:
 			show_hash_info((HashState *) planstate, es);
 			break;
@@ -1845,7 +1853,8 @@ show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es)
 	FdwRoutine *fdwroutine = fsstate->fdwroutine;
 
 	/* Let the FDW emit whatever fields it wants */
-	fdwroutine->ExplainForeignScan(fsstate, es);
+	if (fdwroutine->ExplainForeignScan != NULL)
+		fdwroutine->ExplainForeignScan(fsstate, es);
 }
 
 /*
@@ -1954,6 +1963,8 @@ ExplainTargetRel(Plan *plan, Index rti, ExplainState *es)
 
 	rte = rt_fetch(rti, es->rtable);
 	refname = (char *) list_nth(es->rtable_names, rti - 1);
+	if (refname == NULL)
+		refname = rte->eref->aliasname;
 
 	switch (nodeTag(plan))
 	{
@@ -2026,8 +2037,7 @@ ExplainTargetRel(Plan *plan, Index rti, ExplainState *es)
 							 quote_identifier(objectname));
 		else if (objectname != NULL)
 			appendStringInfo(es->str, " %s", quote_identifier(objectname));
-		if (refname != NULL &&
-			(objectname == NULL || strcmp(refname, objectname) != 0))
+		if (objectname == NULL || strcmp(refname, objectname) != 0)
 			appendStringInfo(es->str, " %s", quote_identifier(refname));
 	}
 	else
@@ -2036,8 +2046,35 @@ ExplainTargetRel(Plan *plan, Index rti, ExplainState *es)
 			ExplainPropertyText(objecttag, objectname, es);
 		if (namespace != NULL)
 			ExplainPropertyText("Schema", namespace, es);
-		if (refname != NULL)
-			ExplainPropertyText("Alias", refname, es);
+		ExplainPropertyText("Alias", refname, es);
+	}
+}
+
+/*
+ * Show extra information for a ModifyTable node
+ */
+static void
+show_modifytable_info(ModifyTableState *mtstate, ExplainState *es)
+{
+	FdwRoutine *fdwroutine = mtstate->resultRelInfo->ri_FdwRoutine;
+
+	/*
+	 * If the first target relation is a foreign table, call its FDW to
+	 * display whatever additional fields it wants to.	For now, we ignore the
+	 * possibility of other targets being foreign tables, although the API for
+	 * ExplainForeignModify is designed to allow them to be processed.
+	 */
+	if (fdwroutine != NULL &&
+		fdwroutine->ExplainForeignModify != NULL)
+	{
+		ModifyTable *node = (ModifyTable *) mtstate->ps.plan;
+		List	   *fdw_private = (List *) linitial(node->fdwPrivLists);
+
+		fdwroutine->ExplainForeignModify(mtstate,
+										 mtstate->resultRelInfo,
+										 fdw_private,
+										 0,
+										 es);
 	}
 }
 

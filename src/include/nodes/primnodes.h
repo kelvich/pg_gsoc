@@ -7,7 +7,7 @@
  *	  and join trees.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/primnodes.h
@@ -80,7 +80,12 @@ typedef struct RangeVar
 } RangeVar;
 
 /*
- * IntoClause - target information for SELECT INTO and CREATE TABLE AS
+ * IntoClause - target information for SELECT INTO, CREATE TABLE AS, and
+ * CREATE MATERIALIZED VIEW
+ *
+ * For CREATE MATERIALIZED VIEW, viewQuery is the parsed-but-not-rewritten
+ * SELECT Query for the view; otherwise it's NULL.  (Although it's actually
+ * Query*, we declare it as Node* to avoid a forward reference.)
  */
 typedef struct IntoClause
 {
@@ -91,6 +96,7 @@ typedef struct IntoClause
 	List	   *options;		/* options from WITH clause */
 	OnCommitAction onCommit;	/* what do we do at COMMIT? */
 	char	   *tableSpaceName; /* table space to use, or NULL */
+	Node	   *viewQuery;		/* materialized view's SELECT query */
 	bool		skipData;		/* true for WITH NO DATA */
 } IntoClause;
 
@@ -241,6 +247,7 @@ typedef struct Aggref
 	List	   *args;			/* arguments and sort expressions */
 	List	   *aggorder;		/* ORDER BY (list of SortGroupClause) */
 	List	   *aggdistinct;	/* DISTINCT (list of SortGroupClause) */
+	Expr	   *aggfilter;		/* FILTER expression */
 	bool		aggstar;		/* TRUE if argument list was really '*' */
 	Index		agglevelsup;	/* > 0 if agg belongs to outer query */
 	int			location;		/* token location, or -1 if unknown */
@@ -257,6 +264,7 @@ typedef struct WindowFunc
 	Oid			wincollid;		/* OID of collation of result */
 	Oid			inputcollid;	/* OID of collation that function should use */
 	List	   *args;			/* arguments to the window function */
+	Expr	   *aggfilter;		/* FILTER expression */
 	Index		winref;			/* index of associated WindowClause */
 	bool		winstar;		/* TRUE if argument list was really '*' */
 	bool		winagg;			/* is function a simple aggregate? */
@@ -321,7 +329,7 @@ typedef enum CoercionContext
  * NB: equal() ignores CoercionForm fields, therefore this *must* not carry
  * any semantically significant information.  We need that behavior so that
  * the planner will consider equivalent implicit and explicit casts to be
- * equivalent.  In cases where those actually behave differently, the coercion
+ * equivalent.	In cases where those actually behave differently, the coercion
  * function's arguments will be different.
  */
 typedef enum CoercionForm
@@ -340,6 +348,7 @@ typedef struct FuncExpr
 	Oid			funcid;			/* PG_PROC OID of the function */
 	Oid			funcresulttype; /* PG_TYPE OID of result value */
 	bool		funcretset;		/* true if function returns set */
+	bool		funcvariadic;	/* true if VARIADIC was used in call */
 	CoercionForm funcformat;	/* how to display this function call */
 	Oid			funccollid;		/* OID of collation of result */
 	Oid			inputcollid;	/* OID of collation that function should use */
@@ -958,7 +967,8 @@ typedef struct MinMaxExpr
  *
  * Note: result type/typmod/collation are not stored, but can be deduced
  * from the XmlExprOp.	The type/typmod fields are just used for display
- * purposes, and are NOT the true result type of the node.
+ * purposes, and are NOT necessarily the true result type of the node.
+ * (We also use type == InvalidOid to mark a not-yet-parse-analyzed XmlExpr.)
  */
 typedef enum XmlExprOp
 {

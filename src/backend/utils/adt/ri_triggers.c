@@ -13,7 +13,7 @@
  *	plan --- consider improving this someday.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  *
  * src/backend/utils/adt/ri_triggers.c
  *
@@ -81,8 +81,8 @@
 #define RI_PLAN_RESTRICT_UPD_CHECKREF	6
 #define RI_PLAN_SETNULL_DEL_DOUPDATE	7
 #define RI_PLAN_SETNULL_UPD_DOUPDATE	8
-#define RI_PLAN_SETDEFAULT_DEL_DOUPDATE	9
-#define RI_PLAN_SETDEFAULT_UPD_DOUPDATE	10
+#define RI_PLAN_SETDEFAULT_DEL_DOUPDATE 9
+#define RI_PLAN_SETDEFAULT_UPD_DOUPDATE 10
 
 #define MAX_QUOTED_NAME_LEN  (NAMEDATALEN*2+3)
 #define MAX_QUOTED_REL_NAME_LEN  (MAX_QUOTED_NAME_LEN*2)
@@ -135,7 +135,7 @@ typedef struct RI_ConstraintInfo
 typedef struct RI_QueryKey
 {
 	Oid			constr_id;		/* OID of pg_constraint entry */
-	int32		constr_queryno;	/* query type ID, see RI_PLAN_XXX above */
+	int32		constr_queryno; /* query type ID, see RI_PLAN_XXX above */
 } RI_QueryKey;
 
 
@@ -299,7 +299,7 @@ RI_FKey_check(TriggerData *trigdata)
 	 * Get the relation descriptors of the FK and PK tables.
 	 *
 	 * pk_rel is opened in RowShareLock mode since that's what our eventual
-	 * SELECT FOR SHARE will get on it.
+	 * SELECT FOR KEY SHARE will get on it.
 	 */
 	fk_rel = trigdata->tg_relation;
 	pk_rel = heap_open(riinfo->pk_relid, RowShareLock);
@@ -337,9 +337,11 @@ RI_FKey_check(TriggerData *trigdata)
 					ereport(ERROR,
 							(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
 							 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
-							  RelationGetRelationName(trigdata->tg_relation),
+									RelationGetRelationName(fk_rel),
 									NameStr(riinfo->conname)),
-							 errdetail("MATCH FULL does not allow mixing of null and nonnull key values.")));
+							 errdetail("MATCH FULL does not allow mixing of null and nonnull key values."),
+							 errtableconstraint(fk_rel,
+												NameStr(riinfo->conname))));
 					heap_close(pk_rel, RowShareLock);
 					return PointerGetDatum(NULL);
 
@@ -400,7 +402,8 @@ RI_FKey_check(TriggerData *trigdata)
 
 		/* ----------
 		 * The query string built is
-		 *	SELECT 1 FROM ONLY <pktable> WHERE pkatt1 = $1 [AND ...] FOR SHARE
+		 *	SELECT 1 FROM ONLY <pktable> x WHERE pkatt1 = $1 [AND ...]
+		 *		   FOR KEY SHARE OF x
 		 * The type id's for the $ parameters are those of the
 		 * corresponding FK attributes.
 		 * ----------
@@ -424,7 +427,7 @@ RI_FKey_check(TriggerData *trigdata)
 			querysep = "AND";
 			queryoids[i] = fk_type;
 		}
-		appendStringInfo(&querybuf, " FOR SHARE OF x");
+		appendStringInfo(&querybuf, " FOR KEY SHARE OF x");
 
 		/* Prepare and save the plan */
 		qplan = ri_PlanCheck(querybuf.data, riinfo->nkeys, queryoids,
@@ -535,7 +538,8 @@ ri_Check_Pk_Match(Relation pk_rel, Relation fk_rel,
 
 		/* ----------
 		 * The query string built is
-		 *	SELECT 1 FROM ONLY <pktable> WHERE pkatt1 = $1 [AND ...] FOR SHARE
+		 *	SELECT 1 FROM ONLY <pktable> x WHERE pkatt1 = $1 [AND ...]
+		 *		   FOR KEY SHARE OF x
 		 * The type id's for the $ parameters are those of the
 		 * PK attributes themselves.
 		 * ----------
@@ -558,7 +562,7 @@ ri_Check_Pk_Match(Relation pk_rel, Relation fk_rel,
 			querysep = "AND";
 			queryoids[i] = pk_type;
 		}
-		appendStringInfo(&querybuf, " FOR SHARE OF x");
+		appendStringInfo(&querybuf, " FOR KEY SHARE OF x");
 
 		/* Prepare and save the plan */
 		qplan = ri_PlanCheck(querybuf.data, riinfo->nkeys, queryoids,
@@ -655,7 +659,7 @@ ri_restrict_del(TriggerData *trigdata, bool is_no_action)
 	 * Get the relation descriptors of the FK and PK tables and the old tuple.
 	 *
 	 * fk_rel is opened in RowShareLock mode since that's what our eventual
-	 * SELECT FOR SHARE will get on it.
+	 * SELECT FOR KEY SHARE will get on it.
 	 */
 	fk_rel = heap_open(riinfo->fk_relid, RowShareLock);
 	pk_rel = trigdata->tg_relation;
@@ -693,8 +697,8 @@ ri_restrict_del(TriggerData *trigdata, bool is_no_action)
 			}
 
 			/*
-			 * If another PK row now exists providing the old key values,
-			 * we should not do anything.  However, this check should only be
+			 * If another PK row now exists providing the old key values, we
+			 * should not do anything.	However, this check should only be
 			 * made in the NO ACTION case; in RESTRICT cases we don't wish to
 			 * allow another row to be substituted.
 			 */
@@ -724,7 +728,8 @@ ri_restrict_del(TriggerData *trigdata, bool is_no_action)
 
 				/* ----------
 				 * The query string built is
-				 *	SELECT 1 FROM ONLY <fktable> WHERE $1 = fkatt1 [AND ...]
+				 *	SELECT 1 FROM ONLY <fktable> x WHERE $1 = fkatt1 [AND ...]
+				 *		   FOR KEY SHARE OF x
 				 * The type id's for the $ parameters are those of the
 				 * corresponding PK attributes.
 				 * ----------
@@ -749,7 +754,7 @@ ri_restrict_del(TriggerData *trigdata, bool is_no_action)
 					querysep = "AND";
 					queryoids[i] = pk_type;
 				}
-				appendStringInfo(&querybuf, " FOR SHARE OF x");
+				appendStringInfo(&querybuf, " FOR KEY SHARE OF x");
 
 				/* Prepare and save the plan */
 				qplan = ri_PlanCheck(querybuf.data, riinfo->nkeys, queryoids,
@@ -868,7 +873,7 @@ ri_restrict_upd(TriggerData *trigdata, bool is_no_action)
 	 * old tuple.
 	 *
 	 * fk_rel is opened in RowShareLock mode since that's what our eventual
-	 * SELECT FOR SHARE will get on it.
+	 * SELECT FOR KEY SHARE will get on it.
 	 */
 	fk_rel = heap_open(riinfo->fk_relid, RowShareLock);
 	pk_rel = trigdata->tg_relation;
@@ -916,8 +921,8 @@ ri_restrict_upd(TriggerData *trigdata, bool is_no_action)
 			}
 
 			/*
-			 * If another PK row now exists providing the old key values,
-			 * we should not do anything.  However, this check should only be
+			 * If another PK row now exists providing the old key values, we
+			 * should not do anything.	However, this check should only be
 			 * made in the NO ACTION case; in RESTRICT cases we don't wish to
 			 * allow another row to be substituted.
 			 */
@@ -972,7 +977,7 @@ ri_restrict_upd(TriggerData *trigdata, bool is_no_action)
 					querysep = "AND";
 					queryoids[i] = pk_type;
 				}
-				appendStringInfo(&querybuf, " FOR SHARE OF x");
+				appendStringInfo(&querybuf, " FOR KEY SHARE OF x");
 
 				/* Prepare and save the plan */
 				qplan = ri_PlanCheck(querybuf.data, riinfo->nkeys, queryoids,
@@ -1845,7 +1850,7 @@ RI_FKey_setdefault_del(PG_FUNCTION_ARGS)
 			 * believe no check is necessary.  So we need to do another lookup
 			 * now and in case a reference still exists, abort the operation.
 			 * That is already implemented in the NO ACTION trigger, so just
-			 * run it.  (This recheck is only needed in the SET DEFAULT case,
+			 * run it.	(This recheck is only needed in the SET DEFAULT case,
 			 * since CASCADE would remove such rows, while SET NULL is certain
 			 * to result in rows that satisfy the FK constraint.)
 			 */
@@ -2036,7 +2041,7 @@ RI_FKey_setdefault_upd(PG_FUNCTION_ARGS)
 			 * believe no check is necessary.  So we need to do another lookup
 			 * now and in case a reference still exists, abort the operation.
 			 * That is already implemented in the NO ACTION trigger, so just
-			 * run it.  (This recheck is only needed in the SET DEFAULT case,
+			 * run it.	(This recheck is only needed in the SET DEFAULT case,
 			 * since CASCADE must change the FK key values, while SET NULL is
 			 * certain to result in rows that satisfy the FK constraint.)
 			 */
@@ -2145,6 +2150,7 @@ RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 	switch (riinfo->confmatchtype)
 	{
 		case FKCONSTR_MATCH_SIMPLE:
+
 			/*
 			 * If any new key value is NULL, the row must satisfy the
 			 * constraint, so no check is needed.
@@ -2171,6 +2177,7 @@ RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 			return true;
 
 		case FKCONSTR_MATCH_FULL:
+
 			/*
 			 * If all new key values are NULL, the row must satisfy the
 			 * constraint, so no check is needed.  On the other hand, if only
@@ -2444,7 +2451,7 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 
 		/*
 		 * The columns to look at in the result tuple are 1..N, not whatever
-		 * they are in the fk_rel.  Hack up riinfo so that the subroutines
+		 * they are in the fk_rel.	Hack up riinfo so that the subroutines
 		 * called here will behave properly.
 		 *
 		 * In addition to this, we have to pass the correct tupdesc to
@@ -2467,7 +2474,9 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 					 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
 							RelationGetRelationName(fk_rel),
 							NameStr(fake_riinfo.conname)),
-					 errdetail("MATCH FULL does not allow mixing of null and nonnull key values.")));
+					 errdetail("MATCH FULL does not allow mixing of null and nonnull key values."),
+					 errtableconstraint(fk_rel,
+										NameStr(fake_riinfo.conname))));
 
 		/*
 		 * We tell ri_ReportViolation we were doing the RI_PLAN_CHECK_LOOKUPPK
@@ -2669,8 +2678,8 @@ ri_BuildQueryKey(RI_QueryKey *key, const RI_ConstraintInfo *riinfo,
 				 int32 constr_queryno)
 {
 	/*
-	 * We assume struct RI_QueryKey contains no padding bytes, else we'd
-	 * need to use memset to clear them.
+	 * We assume struct RI_QueryKey contains no padding bytes, else we'd need
+	 * to use memset to clear them.
 	 */
 	key->constr_id = riinfo->constraint_id;
 	key->constr_queryno = constr_queryno;
@@ -2805,14 +2814,14 @@ ri_LoadConstraintInfo(Oid constraintOid)
 		elog(ERROR, "cache lookup failed for constraint %u", constraintOid);
 	conForm = (Form_pg_constraint) GETSTRUCT(tup);
 
-	if (conForm->contype != CONSTRAINT_FOREIGN)	/* should not happen */
+	if (conForm->contype != CONSTRAINT_FOREIGN) /* should not happen */
 		elog(ERROR, "constraint %u is not a foreign key constraint",
 			 constraintOid);
 
 	/* And extract data */
 	Assert(riinfo->constraint_id == constraintOid);
 	riinfo->oidHashValue = GetSysCacheHashValue1(CONSTROID,
-											 ObjectIdGetDatum(constraintOid));
+											ObjectIdGetDatum(constraintOid));
 	memcpy(&riinfo->conname, &conForm->conname, sizeof(NameData));
 	riinfo->pk_relid = conForm->confrelid;
 	riinfo->fk_relid = conForm->conrelid;
@@ -3013,10 +3022,10 @@ ri_PerformCheck(const RI_ConstraintInfo *riinfo,
 
 	/*
 	 * The values for the query are taken from the table on which the trigger
-	 * is called - it is normally the other one with respect to query_rel.
-	 * An exception is ri_Check_Pk_Match(), which uses the PK table for both
-	 * (and sets queryno to RI_PLAN_CHECK_LOOKUPPK_FROM_PK).  We might
-	 * eventually need some less klugy way to determine this.
+	 * is called - it is normally the other one with respect to query_rel. An
+	 * exception is ri_Check_Pk_Match(), which uses the PK table for both (and
+	 * sets queryno to RI_PLAN_CHECK_LOOKUPPK_FROM_PK).  We might eventually
+	 * need some less klugy way to determine this.
 	 */
 	if (qkey->constr_queryno == RI_PLAN_CHECK_LOOKUPPK)
 	{
@@ -3219,7 +3228,8 @@ ri_ReportViolation(const RI_ConstraintInfo *riinfo,
 						NameStr(riinfo->conname)),
 				 errdetail("Key (%s)=(%s) is not present in table \"%s\".",
 						   key_names.data, key_values.data,
-						   RelationGetRelationName(pk_rel))));
+						   RelationGetRelationName(pk_rel)),
+				 errtableconstraint(fk_rel, NameStr(riinfo->conname))));
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
@@ -3229,7 +3239,8 @@ ri_ReportViolation(const RI_ConstraintInfo *riinfo,
 						RelationGetRelationName(fk_rel)),
 			errdetail("Key (%s)=(%s) is still referenced from table \"%s\".",
 					  key_names.data, key_values.data,
-					  RelationGetRelationName(fk_rel))));
+					  RelationGetRelationName(fk_rel)),
+				 errtableconstraint(fk_rel, NameStr(riinfo->conname))));
 }
 
 

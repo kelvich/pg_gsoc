@@ -4,7 +4,7 @@
  *	  prototypes for postgres.c.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/tcopprot.h
@@ -64,14 +64,16 @@ extern void assign_max_stack_depth(int newval, void *extra);
 extern void die(SIGNAL_ARGS);
 extern void quickdie(SIGNAL_ARGS) __attribute__((noreturn));
 extern void StatementCancelHandler(SIGNAL_ARGS);
-extern void FloatExceptionHandler(SIGNAL_ARGS);
+extern void FloatExceptionHandler(SIGNAL_ARGS) __attribute__((noreturn));
 extern void RecoveryConflictInterrupt(ProcSignalReason reason); /* called from SIGUSR1
 																 * handler */
 extern void prepare_for_client_read(void);
 extern void client_read_ended(void);
-extern const char *process_postgres_switches(int argc, char *argv[],
-						  GucContext ctx);
-extern void PostgresMain(int argc, char *argv[], const char *username) __attribute__((noreturn));
+extern void process_postgres_switches(int argc, char *argv[],
+						  GucContext ctx, const char **dbname);
+extern void PostgresMain(int argc, char *argv[],
+			 const char *dbname,
+			 const char *username) __attribute__((noreturn));
 extern long get_stack_depth_rlimit(void);
 extern void ResetUsage(void);
 extern void ShowUsage(const char *title);

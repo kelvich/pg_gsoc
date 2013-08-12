@@ -5,7 +5,7 @@
  *	  zillions of large objects (internal, external, jaquith, inversion).
  *	  Now we only support inversion.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/large_object.h
@@ -70,7 +70,7 @@ typedef struct LargeObjectDesc
 #define LOBLKSIZE		(BLCKSZ / 4)
 
 /*
- * Maximum length in bytes for a large object.  To make this larger, we'd
+ * Maximum length in bytes for a large object.	To make this larger, we'd
  * have to widen pg_largeobject.pageno as well as various internal variables.
  */
 #define MAX_LARGE_OBJECT_SIZE	((int64) INT_MAX * LOBLKSIZE)

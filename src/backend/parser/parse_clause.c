@@ -3,7 +3,7 @@
  * parse_clause.c
  *	  handle clauses in parser
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,7 +21,6 @@
 #include "commands/defrem.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/clauses.h"
 #include "optimizer/tlist.h"
 #include "parser/analyze.h"
 #include "parser/parsetree.h"
@@ -243,9 +242,13 @@ interpretInhOption(InhOption inhOpt)
  * table/result set should be created with OIDs. This needs to be done after
  * parsing the query string because the return value can depend upon the
  * default_with_oids GUC var.
+ *
+ * In some situations, we want to reject an OIDS option even if it's present.
+ * That's (rather messily) handled here rather than reloptions.c, because that
+ * code explicitly punts checking for oids to here.
  */
 bool
-interpretOidsOption(List *defList)
+interpretOidsOption(List *defList, bool allowOids)
 {
 	ListCell   *cell;
 
@@ -256,8 +259,19 @@ interpretOidsOption(List *defList)
 
 		if (def->defnamespace == NULL &&
 			pg_strcasecmp(def->defname, "oids") == 0)
+		{
+			if (!allowOids)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("unrecognized parameter \"%s\"",
+								def->defname)));
 			return defGetBoolean(def);
+		}
 	}
+
+	/* Force no-OIDS result if caller disallows OIDS. */
+	if (!allowOids)
+		return false;
 
 	/* OIDS option was not specified, so use default. */
 	return default_with_oids;
@@ -503,6 +517,7 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
 {
 	Node	   *funcexpr;
 	char	   *funcname;
+	bool		is_lateral;
 	RangeTblEntry *rte;
 
 	/*
@@ -514,12 +529,16 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
 	funcname = FigureColname(r->funccallnode);
 
 	/*
-	 * If the function is LATERAL, make lateral_only names of this level
-	 * visible to it.  (LATERAL can't nest within a single pstate level, so we
-	 * don't need save/restore logic here.)
+	 * We make lateral_only names of this level visible, whether or not the
+	 * function is explicitly marked LATERAL.  This is needed for SQL spec
+	 * compliance in the case of UNNEST(), and seems useful on convenience
+	 * grounds for all functions in FROM.
+	 *
+	 * (LATERAL can't nest within a single pstate level, so we don't need
+	 * save/restore logic here.)
 	 */
 	Assert(!pstate->p_lateral_active);
-	pstate->p_lateral_active = r->lateral;
+	pstate->p_lateral_active = true;
 
 	/*
 	 * Transform the raw expression.
@@ -534,10 +553,16 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
 	assign_expr_collations(pstate, funcexpr);
 
 	/*
+	 * Mark the RTE as LATERAL if the user said LATERAL explicitly, or if
+	 * there are any lateral cross-references in it.
+	 */
+	is_lateral = r->lateral || contain_vars_of_level(funcexpr, 0);
+
+	/*
 	 * OK, build an RTE for the function.
 	 */
 	rte = addRangeTableEntryForFunction(pstate, funcname, funcexpr,
-										r, r->lateral, true);
+										r, is_lateral, true);
 
 	/*
 	 * If a coldeflist was supplied, ensure it defines a legal set of names
@@ -578,7 +603,7 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
  * *top_rti: receives the rangetable index of top_rte.	(Ditto.)
  *
  * *namespace: receives a List of ParseNamespaceItems for the RTEs exposed
- * as table/column names by this item.  (The lateral_only flags in these items
+ * as table/column names by this item.	(The lateral_only flags in these items
  * are indeterminate and should be explicitly set by the caller before use.)
  */
 static Node *
@@ -689,8 +714,8 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		/*
 		 * Make the left-side RTEs available for LATERAL access within the
 		 * right side, by temporarily adding them to the pstate's namespace
-		 * list.  Per SQL:2008, if the join type is not INNER or LEFT then
-		 * the left-side names must still be exposed, but it's an error to
+		 * list.  Per SQL:2008, if the join type is not INNER or LEFT then the
+		 * left-side names must still be exposed, but it's an error to
 		 * reference them.	(Stupid design, but that's what it says.)  Hence,
 		 * we always push them into the namespace, but mark them as not
 		 * lateral_ok if the jointype is wrong.
@@ -954,7 +979,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		 *
 		 * Note: if there are nested alias-less JOINs, the lower-level ones
 		 * will remain in the list although they have neither p_rel_visible
-		 * nor p_cols_visible set.  We could delete such list items, but it's
+		 * nor p_cols_visible set.	We could delete such list items, but it's
 		 * unclear that it's worth expending cycles to do so.
 		 */
 		if (j->alias != NULL)
@@ -1256,20 +1281,20 @@ checkTargetlistEntrySQL92(ParseState *pstate, TargetEntry *tle,
 				contain_aggs_of_level((Node *) tle->expr, 0))
 				ereport(ERROR,
 						(errcode(ERRCODE_GROUPING_ERROR),
-						 /* translator: %s is name of a SQL construct, eg GROUP BY */
+				/* translator: %s is name of a SQL construct, eg GROUP BY */
 						 errmsg("aggregate functions are not allowed in %s",
 								ParseExprKindName(exprKind)),
 						 parser_errposition(pstate,
-											locate_agg_of_level((Node *) tle->expr, 0))));
+							   locate_agg_of_level((Node *) tle->expr, 0))));
 			if (pstate->p_hasWindowFuncs &&
 				contain_windowfuncs((Node *) tle->expr))
 				ereport(ERROR,
 						(errcode(ERRCODE_WINDOWING_ERROR),
-						 /* translator: %s is name of a SQL construct, eg GROUP BY */
+				/* translator: %s is name of a SQL construct, eg GROUP BY */
 						 errmsg("window functions are not allowed in %s",
 								ParseExprKindName(exprKind)),
 						 parser_errposition(pstate,
-											locate_windowfunc((Node *) tle->expr))));
+									locate_windowfunc((Node *) tle->expr))));
 			break;
 		case EXPR_KIND_ORDER_BY:
 			/* no extra checks needed */
@@ -1298,7 +1323,7 @@ checkTargetlistEntrySQL92(ParseState *pstate, TargetEntry *tle,
  *
  * node		the ORDER BY, GROUP BY, or DISTINCT ON expression to be matched
  * tlist	the target list (passed by reference so we can append to it)
- * exprKind	identifies clause type being processed
+ * exprKind identifies clause type being processed
  */
 static TargetEntry *
 findTargetlistEntrySQL92(ParseState *pstate, Node *node, List **tlist,
@@ -1465,7 +1490,7 @@ findTargetlistEntrySQL92(ParseState *pstate, Node *node, List **tlist,
  *
  * node		the ORDER BY, GROUP BY, etc expression to be matched
  * tlist	the target list (passed by reference so we can append to it)
- * exprKind	identifies clause type being processed
+ * exprKind identifies clause type being processed
  */
 static TargetEntry *
 findTargetlistEntrySQL99(ParseState *pstate, Node *node, List **tlist,

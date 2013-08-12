@@ -3,11 +3,11 @@
  *
  *	database server functions
  *
- *	Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *	contrib/pg_upgrade/server.c
  */
 
-#include "postgres.h"
+#include "postgres_fe.h"
 
 #include "pg_upgrade.h"
 
@@ -79,7 +79,7 @@ get_db_conn(ClusterInfo *cluster, const char *db_name)
 char *
 cluster_conn_opts(ClusterInfo *cluster)
 {
-	static char	conn_opts[MAXPGPATH + NAMEDATALEN + 100];
+	static char conn_opts[MAXPGPATH + NAMEDATALEN + 100];
 
 	if (cluster->sockdir)
 		snprintf(conn_opts, sizeof(conn_opts),
@@ -170,8 +170,8 @@ stop_postmaster_atexit(void)
 }
 
 
-void
-start_postmaster(ClusterInfo *cluster)
+bool
+start_postmaster(ClusterInfo *cluster, bool throw_error)
 {
 	char		cmd[MAXPGPATH * 4 + 1000];
 	PGconn	   *conn;
@@ -192,7 +192,7 @@ start_postmaster(ClusterInfo *cluster)
 	strcat(socket_string,
 		   " -c listen_addresses='' -c unix_socket_permissions=0700");
 
-	/* Have a sockdir?  Tell the postmaster. */
+	/* Have a sockdir?	Tell the postmaster. */
 	if (cluster->sockdir)
 		snprintf(socket_string + strlen(socket_string),
 				 sizeof(socket_string) - strlen(socket_string),
@@ -215,13 +215,13 @@ start_postmaster(ClusterInfo *cluster)
 	 * win on ext4.
 	 */
 	snprintf(cmd, sizeof(cmd),
-			 "\"%s/pg_ctl\" -w -l \"%s\" -D \"%s\" -o \"-p %d%s%s %s%s\" start",
+		  "\"%s/pg_ctl\" -w -l \"%s\" -D \"%s\" -o \"-p %d%s%s %s%s\" start",
 		  cluster->bindir, SERVER_LOG_FILE, cluster->pgconfig, cluster->port,
 			 (cluster->controldata.cat_ver >=
 			  BINARY_UPGRADE_SERVER_FLAG_CAT_VER) ? " -b" :
 			 " -c autovacuum=off -c autovacuum_freeze_max_age=2000000000",
 			 (cluster == &new_cluster) ?
-				" -c synchronous_commit=off -c fsync=off -c full_page_writes=off" : "",
+	  " -c synchronous_commit=off -c fsync=off -c full_page_writes=off" : "",
 			 cluster->pgopts ? cluster->pgopts : "", socket_string);
 
 	/*
@@ -229,12 +229,15 @@ start_postmaster(ClusterInfo *cluster)
 	 * it might supply a reason for the failure.
 	 */
 	pg_ctl_return = exec_prog(SERVER_START_LOG_FILE,
-							  /* pass both file names if they differ */
+	/* pass both file names if they differ */
 							  (strcmp(SERVER_LOG_FILE,
 									  SERVER_START_LOG_FILE) != 0) ?
 							  SERVER_LOG_FILE : NULL,
 							  false,
 							  "%s", cmd);
+
+	if (!pg_ctl_return && !throw_error)
+		return false;
 
 	/* Check to see if we can connect to the server; if not, report it. */
 	if ((conn = get_db_conn(cluster, "template1")) == NULL ||
@@ -256,6 +259,8 @@ start_postmaster(ClusterInfo *cluster)
 			   CLUSTER_NAME(cluster));
 
 	os_info.running_cluster = cluster;
+
+	return true;
 }
 
 

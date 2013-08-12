@@ -3,7 +3,7 @@
  * globals.c
  *	  global variable declarations
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,7 +18,6 @@
  */
 #include "postgres.h"
 
-#include "catalog/objectaccess.h"
 #include "libpq/pqcomm.h"
 #include "miscadmin.h"
 #include "storage/backendid.h"
@@ -103,13 +102,15 @@ int			work_mem = 1024;
 int			maintenance_work_mem = 16384;
 
 /*
- * Primary determinants of sizes of shared-memory structures.  MaxBackends is
- * MaxConnections + autovacuum_max_workers + 1 (it is computed by the GUC
- * assign hooks for those variables):
+ * Primary determinants of sizes of shared-memory structures.
+ *
+ * MaxBackends is computed by PostmasterMain after modules have had a chance to
+ * register background workers.
  */
 int			NBuffers = 1000;
-int			MaxBackends = 100;
 int			MaxConnections = 90;
+int			max_worker_processes = 8;
+int			MaxBackends = 0;
 
 int			VacuumCostPageHit = 1;		/* GUC parameters for vacuum */
 int			VacuumCostPageMiss = 10;
@@ -125,9 +126,3 @@ int			VacuumCostBalance = 0;		/* working state for vacuum */
 bool		VacuumCostActive = false;
 
 int			GinFuzzySearchLimit = 0;
-
-/*
- * Hook on object accesses.  This is intended as infrastructure for security
- * and logging plugins.
- */
-object_access_hook_type object_access_hook = NULL;

@@ -1,16 +1,18 @@
 /*--------------------------------------------------------------------
  * bgworker.h
- * 		POSTGRES pluggable background workers interface
+ *		POSTGRES pluggable background workers interface
  *
  * A background worker is a process able to run arbitrary, user-supplied code,
  * including normal transactions.
  *
  * Any external module loaded via shared_preload_libraries can register a
- * worker.  Then, at the appropriate time, the worker process is forked from
- * the postmaster and runs the user-supplied "main" function.  This code may
- * connect to a database and run transactions.  Once started, it stays active
- * until shutdown or crash.  The process should sleep during periods of
- * inactivity.
+ * worker.	Workers can also be registered dynamically at runtime.  In either
+ * case, the worker process is forked from the postmaster and runs the
+ * user-supplied "main" function.  This code may connect to a database and
+ * run transactions.  Once started, it stays active until shutdown or crash;
+ * unless the restart interval is declared as BGW_NEVER_RESTART and the
+ * process exits with a return code of 1; workers that do this are
+ * automatically unregistered by the postmaster.
  *
  * If the fork() call fails in the postmaster, it will try again later.  Note
  * that the failure can only be transient (fork failure due to high load,
@@ -24,11 +26,11 @@
  * different) code.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- * 		src/include/postmaster/bgworker.h
+ *		src/include/postmaster/bgworker.h
  *--------------------------------------------------------------------
  */
 #ifndef BGWORKER_H
@@ -52,8 +54,7 @@
 #define BGWORKER_BACKEND_DATABASE_CONNECTION		0x0002
 
 
-typedef void (*bgworker_main_type)(void *main_arg);
-typedef void (*bgworker_sighdlr_type)(SIGNAL_ARGS);
+typedef void (*bgworker_main_type) (Datum main_arg);
 
 /*
  * Points in time at which a bgworker can request to be started
@@ -67,21 +68,25 @@ typedef enum
 
 #define BGW_DEFAULT_RESTART_INTERVAL	60
 #define BGW_NEVER_RESTART				-1
+#define BGW_MAXLEN						64
 
 typedef struct BackgroundWorker
 {
-	char	   *bgw_name;
-	int         bgw_flags;
+	char	    bgw_name[BGW_MAXLEN];
+	int			bgw_flags;
 	BgWorkerStartTime bgw_start_time;
 	int			bgw_restart_time;		/* in seconds, or BGW_NEVER_RESTART */
-	bgworker_main_type	bgw_main;
-	void	   *bgw_main_arg;
-	bgworker_sighdlr_type bgw_sighup;
-	bgworker_sighdlr_type bgw_sigterm;
+	bgworker_main_type bgw_main;
+	char		bgw_library_name[BGW_MAXLEN];	/* only if bgw_main is NULL */
+	char		bgw_function_name[BGW_MAXLEN];	/* only if bgw_main is NULL */
+	Datum		bgw_main_arg;
 } BackgroundWorker;
 
-/* Register a new bgworker */
+/* Register a new bgworker during shared_preload_libraries */
 extern void RegisterBackgroundWorker(BackgroundWorker *worker);
+
+/* Register a new bgworker from a regular backend */
+extern bool RegisterDynamicBackgroundWorker(BackgroundWorker *worker);
 
 /* This is valid in a running worker */
 extern BackgroundWorker *MyBgworkerEntry;
@@ -101,4 +106,4 @@ extern void BackgroundWorkerInitializeConnection(char *dbname, char *username);
 extern void BackgroundWorkerBlockSignals(void);
 extern void BackgroundWorkerUnblockSignals(void);
 
-#endif /* BGWORKER_H */
+#endif   /* BGWORKER_H */

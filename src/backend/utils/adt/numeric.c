@@ -11,7 +11,7 @@
  * Transactions on Mathematical Software, Vol. 24, No. 4, December 1998,
  * pages 359-367.
  *
- * Copyright (c) 1998-2012, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/numeric.c
@@ -2645,7 +2645,7 @@ numeric_avg(PG_FUNCTION_ARGS)
 	N = DatumGetNumeric(transdatums[0]);
 	sumX = DatumGetNumeric(transdatums[1]);
 
-	/* SQL92 defines AVG of no values to be NULL */
+	/* SQL defines AVG of no values to be NULL */
 	/* N is zero iff no digits (cf. numeric_uminus) */
 	if (NUMERIC_NDIGITS(N) == 0)
 		PG_RETURN_NULL();
@@ -2824,7 +2824,7 @@ numeric_stddev_pop(PG_FUNCTION_ARGS)
  * purposes.  (The latter two therefore don't really belong in this file,
  * but we keep them here anyway.)
  *
- * Because SQL92 defines the SUM() of no values to be NULL, not zero,
+ * Because SQL defines the SUM() of no values to be NULL, not zero,
  * the initial condition of the transition data value needs to be NULL. This
  * means we can't rely on ExecAgg to automatically insert the first non-null
  * data value into the transition data: it doesn't know how to do the type
@@ -3046,7 +3046,7 @@ int8_avg(PG_FUNCTION_ARGS)
 		elog(ERROR, "expected 2-element int8 array");
 	transdata = (Int8TransTypeData *) ARR_DATA_PTR(transarray);
 
-	/* SQL92 defines AVG of no values to be NULL */
+	/* SQL defines AVG of no values to be NULL */
 	if (transdata->count == 0)
 		PG_RETURN_NULL();
 
@@ -3402,7 +3402,7 @@ init_var_from_num(Numeric num, NumericVar *dest)
 	dest->sign = NUMERIC_SIGN(num);
 	dest->dscale = NUMERIC_DSCALE(num);
 	dest->digits = NUMERIC_DIGITS(num);
-	dest->buf = NULL;	/* digits array is not palloc'd */
+	dest->buf = NULL;			/* digits array is not palloc'd */
 }
 
 

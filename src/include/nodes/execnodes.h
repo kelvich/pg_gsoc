@@ -4,7 +4,7 @@
  *	  definitions for executor state nodes
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/execnodes.h
@@ -270,7 +270,8 @@ typedef struct ProjectionInfo
  *	  resultSlot:		tuple slot used to hold cleaned tuple.
  *	  junkAttNo:		not used by junkfilter code.  Can be used by caller
  *						to remember the attno of a specific junk attribute
- *						(execMain.c stores the "ctid" attno here).
+ *						(nodeModifyTable.c keeps the "ctid" or "wholerow"
+ *						attno here).
  * ----------------
  */
 typedef struct JunkFilter
@@ -300,6 +301,10 @@ typedef struct JunkFilter
  *		TrigFunctions			cached lookup info for trigger functions
  *		TrigWhenExprs			array of trigger WHEN expr states
  *		TrigInstrument			optional runtime measurements for triggers
+ *		FdwRoutine				FDW callback functions, if foreign table
+ *		FdwState				available to save private state of FDW
+ *		WithCheckOptions		list of WithCheckOption's for views
+ *		WithCheckOptionExprs	list of WithCheckOption expr states
  *		ConstraintExprs			array of constraint-checking expr states
  *		junkFilter				for removing junk attributes from tuples
  *		projectReturning		for computing a RETURNING list
@@ -317,6 +322,10 @@ typedef struct ResultRelInfo
 	FmgrInfo   *ri_TrigFunctions;
 	List	  **ri_TrigWhenExprs;
 	Instrumentation *ri_TrigInstrument;
+	struct FdwRoutine *ri_FdwRoutine;
+	void	   *ri_FdwState;
+	List	   *ri_WithCheckOptions;
+	List	   *ri_WithCheckOptionExprs;
 	List	  **ri_ConstraintExprs;
 	JunkFilter *ri_junkFilter;
 	ProjectionInfo *ri_projectReturning;
@@ -403,9 +412,9 @@ typedef struct EState
 
 /*
  * ExecRowMark -
- *	   runtime representation of FOR UPDATE/SHARE clauses
+ *	   runtime representation of FOR [KEY] UPDATE/SHARE clauses
  *
- * When doing UPDATE, DELETE, or SELECT FOR UPDATE/SHARE, we should have an
+ * When doing UPDATE, DELETE, or SELECT FOR [KEY] UPDATE/SHARE, we should have an
  * ExecRowMark for each non-target relation in the query (except inheritance
  * parent RTEs, which can be ignored at runtime).  See PlanRowMark for details
  * about most of the fields.  In addition to fields directly derived from
@@ -426,7 +435,7 @@ typedef struct ExecRowMark
 
 /*
  * ExecAuxRowMark -
- *	   additional runtime representation of FOR UPDATE/SHARE clauses
+ *	   additional runtime representation of FOR [KEY] UPDATE/SHARE clauses
  *
  * Each LockRows and ModifyTable node keeps a list of the rowmarks it needs to
  * deal with.  In addition to a pointer to the related entry in es_rowMarks,
@@ -579,6 +588,7 @@ typedef struct AggrefExprState
 {
 	ExprState	xprstate;
 	List	   *args;			/* states of argument expressions */
+	ExprState  *aggfilter;		/* FILTER expression */
 	int			aggno;			/* ID number for agg within its plan node */
 } AggrefExprState;
 
@@ -590,6 +600,7 @@ typedef struct WindowFuncExprState
 {
 	ExprState	xprstate;
 	List	   *args;			/* states of argument expressions */
+	ExprState  *aggfilter;		/* FILTER expression */
 	int			wfuncno;		/* ID number for wfunc within its plan node */
 } WindowFuncExprState;
 
@@ -1384,7 +1395,10 @@ typedef struct SubqueryScanState
  *		function appearing in FROM (typically a function returning set).
  *
  *		eflags				node's capability flags
- *		tupdesc				expected return tuple description
+ *		ordinal				column value for WITH ORDINALITY
+ *		scan_tupdesc		scan tuple descriptor 
+ *		func_tupdesc		function tuple descriptor 
+ *		func_slot			function result slot, or null
  *		tuplestorestate		private state of tuplestore.c
  *		funcexpr			state for function expression being evaluated
  * ----------------
@@ -1393,7 +1407,10 @@ typedef struct FunctionScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	int			eflags;
-	TupleDesc	tupdesc;
+	int64       ordinal;
+	TupleDesc	scan_tupdesc;
+	TupleDesc	func_tupdesc;
+	TupleTableSlot *func_slot;
 	Tuplestorestate *tuplestorestate;
 	ExprState  *funcexpr;
 } FunctionScanState;
@@ -1824,7 +1841,7 @@ typedef struct SetOpState
 /* ----------------
  *	 LockRowsState information
  *
- *		LockRows nodes are used to enforce FOR UPDATE/FOR SHARE locking.
+ *		LockRows nodes are used to enforce FOR [KEY] UPDATE/SHARE locking.
  * ----------------
  */
 typedef struct LockRowsState

@@ -18,7 +18,7 @@
  * "x" to be considered equal() to another reference to "x" in the query.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -123,6 +123,7 @@ _equalIntoClause(const IntoClause *a, const IntoClause *b)
 	COMPARE_NODE_FIELD(options);
 	COMPARE_SCALAR_FIELD(onCommit);
 	COMPARE_STRING_FIELD(tableSpaceName);
+	COMPARE_NODE_FIELD(viewQuery);
 	COMPARE_SCALAR_FIELD(skipData);
 
 	return true;
@@ -195,6 +196,7 @@ _equalAggref(const Aggref *a, const Aggref *b)
 	COMPARE_NODE_FIELD(args);
 	COMPARE_NODE_FIELD(aggorder);
 	COMPARE_NODE_FIELD(aggdistinct);
+	COMPARE_NODE_FIELD(aggfilter);
 	COMPARE_SCALAR_FIELD(aggstar);
 	COMPARE_SCALAR_FIELD(agglevelsup);
 	COMPARE_LOCATION_FIELD(location);
@@ -210,6 +212,7 @@ _equalWindowFunc(const WindowFunc *a, const WindowFunc *b)
 	COMPARE_SCALAR_FIELD(wincollid);
 	COMPARE_SCALAR_FIELD(inputcollid);
 	COMPARE_NODE_FIELD(args);
+	COMPARE_NODE_FIELD(aggfilter);
 	COMPARE_SCALAR_FIELD(winref);
 	COMPARE_SCALAR_FIELD(winstar);
 	COMPARE_SCALAR_FIELD(winagg);
@@ -239,6 +242,7 @@ _equalFuncExpr(const FuncExpr *a, const FuncExpr *b)
 	COMPARE_SCALAR_FIELD(funcid);
 	COMPARE_SCALAR_FIELD(funcresulttype);
 	COMPARE_SCALAR_FIELD(funcretset);
+	COMPARE_SCALAR_FIELD(funcvariadic);
 	COMPARE_COERCIONFORM_FIELD(funcformat);
 	COMPARE_SCALAR_FIELD(funccollid);
 	COMPARE_SCALAR_FIELD(inputcollid);
@@ -726,22 +730,8 @@ _equalFromExpr(const FromExpr *a, const FromExpr *b)
 static bool
 _equalPathKey(const PathKey *a, const PathKey *b)
 {
-	/*
-	 * This is normally used on non-canonicalized PathKeys, so must chase up
-	 * to the topmost merged EquivalenceClass and see if those are the same
-	 * (by pointer equality).
-	 */
-	EquivalenceClass *a_eclass;
-	EquivalenceClass *b_eclass;
-
-	a_eclass = a->pk_eclass;
-	while (a_eclass->ec_merged)
-		a_eclass = a_eclass->ec_merged;
-	b_eclass = b->pk_eclass;
-	while (b_eclass->ec_merged)
-		b_eclass = b_eclass->ec_merged;
-	if (a_eclass != b_eclass)
-		return false;
+	/* We assume pointer equality is sufficient to compare the eclasses */
+	COMPARE_SCALAR_FIELD(pk_eclass);
 	COMPARE_SCALAR_FIELD(pk_opfamily);
 	COMPARE_SCALAR_FIELD(pk_strategy);
 	COMPARE_SCALAR_FIELD(pk_nulls_first);
@@ -863,6 +853,7 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(rtable);
 	COMPARE_NODE_FIELD(jointree);
 	COMPARE_NODE_FIELD(targetList);
+	COMPARE_NODE_FIELD(withCheckOptions);
 	COMPARE_NODE_FIELD(returningList);
 	COMPARE_NODE_FIELD(groupClause);
 	COMPARE_NODE_FIELD(havingQual);
@@ -1089,6 +1080,7 @@ _equalCopyStmt(const CopyStmt *a, const CopyStmt *b)
 	COMPARE_NODE_FIELD(query);
 	COMPARE_NODE_FIELD(attlist);
 	COMPARE_SCALAR_FIELD(is_from);
+	COMPARE_SCALAR_FIELD(is_program);
 	COMPARE_STRING_FIELD(filename);
 	COMPARE_NODE_FIELD(options);
 
@@ -1391,6 +1383,7 @@ _equalViewStmt(const ViewStmt *a, const ViewStmt *b)
 	COMPARE_NODE_FIELD(query);
 	COMPARE_SCALAR_FIELD(replace);
 	COMPARE_NODE_FIELD(options);
+	COMPARE_SCALAR_FIELD(withCheckOption);
 
 	return true;
 }
@@ -1523,7 +1516,18 @@ _equalCreateTableAsStmt(const CreateTableAsStmt *a, const CreateTableAsStmt *b)
 {
 	COMPARE_NODE_FIELD(query);
 	COMPARE_NODE_FIELD(into);
+	COMPARE_SCALAR_FIELD(relkind);
 	COMPARE_SCALAR_FIELD(is_select_into);
+
+	return true;
+}
+
+static bool
+_equalRefreshMatViewStmt(const RefreshMatViewStmt *a, const RefreshMatViewStmt *b)
+{
+	COMPARE_SCALAR_FIELD(concurrent);
+	COMPARE_SCALAR_FIELD(skipData);
+	COMPARE_NODE_FIELD(relation);
 
 	return true;
 }
@@ -1993,6 +1997,7 @@ _equalFuncCall(const FuncCall *a, const FuncCall *b)
 	COMPARE_NODE_FIELD(funcname);
 	COMPARE_NODE_FIELD(args);
 	COMPARE_NODE_FIELD(agg_order);
+	COMPARE_NODE_FIELD(agg_filter);
 	COMPARE_SCALAR_FIELD(agg_star);
 	COMPARE_SCALAR_FIELD(agg_distinct);
 	COMPARE_SCALAR_FIELD(func_variadic);
@@ -2121,6 +2126,7 @@ _equalRangeSubselect(const RangeSubselect *a, const RangeSubselect *b)
 static bool
 _equalRangeFunction(const RangeFunction *a, const RangeFunction *b)
 {
+	COMPARE_SCALAR_FIELD(ordinality);
 	COMPARE_SCALAR_FIELD(lateral);
 	COMPARE_NODE_FIELD(funccallnode);
 	COMPARE_NODE_FIELD(alias);
@@ -2209,7 +2215,7 @@ static bool
 _equalLockingClause(const LockingClause *a, const LockingClause *b)
 {
 	COMPARE_NODE_FIELD(lockedRels);
-	COMPARE_SCALAR_FIELD(forUpdate);
+	COMPARE_SCALAR_FIELD(strength);
 	COMPARE_SCALAR_FIELD(noWait);
 
 	return true;
@@ -2229,6 +2235,7 @@ _equalRangeTblEntry(const RangeTblEntry *a, const RangeTblEntry *b)
 	COMPARE_NODE_FIELD(funccoltypes);
 	COMPARE_NODE_FIELD(funccoltypmods);
 	COMPARE_NODE_FIELD(funccolcollations);
+	COMPARE_SCALAR_FIELD(funcordinality);
 	COMPARE_NODE_FIELD(values_lists);
 	COMPARE_NODE_FIELD(values_collations);
 	COMPARE_STRING_FIELD(ctename);
@@ -2246,6 +2253,16 @@ _equalRangeTblEntry(const RangeTblEntry *a, const RangeTblEntry *b)
 	COMPARE_SCALAR_FIELD(checkAsUser);
 	COMPARE_BITMAPSET_FIELD(selectedCols);
 	COMPARE_BITMAPSET_FIELD(modifiedCols);
+
+	return true;
+}
+
+static bool
+_equalWithCheckOption(const WithCheckOption *a, const WithCheckOption *b)
+{
+	COMPARE_STRING_FIELD(viewname);
+	COMPARE_NODE_FIELD(qual);
+	COMPARE_SCALAR_FIELD(cascaded);
 
 	return true;
 }
@@ -2282,7 +2299,7 @@ static bool
 _equalRowMarkClause(const RowMarkClause *a, const RowMarkClause *b)
 {
 	COMPARE_SCALAR_FIELD(rti);
-	COMPARE_SCALAR_FIELD(forUpdate);
+	COMPARE_SCALAR_FIELD(strength);
 	COMPARE_SCALAR_FIELD(noWait);
 	COMPARE_SCALAR_FIELD(pushedDown);
 
@@ -2788,6 +2805,9 @@ equal(const void *a, const void *b)
 		case T_CreateTableAsStmt:
 			retval = _equalCreateTableAsStmt(a, b);
 			break;
+		case T_RefreshMatViewStmt:
+			retval = _equalRefreshMatViewStmt(a, b);
+			break;
 		case T_CreateSeqStmt:
 			retval = _equalCreateSeqStmt(a, b);
 			break;
@@ -2980,6 +3000,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_RangeTblEntry:
 			retval = _equalRangeTblEntry(a, b);
+			break;
+		case T_WithCheckOption:
+			retval = _equalWithCheckOption(a, b);
 			break;
 		case T_SortGroupClause:
 			retval = _equalSortGroupClause(a, b);

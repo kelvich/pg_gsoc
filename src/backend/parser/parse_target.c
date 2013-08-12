@@ -3,7 +3,7 @@
  * parse_target.c
  *	  handle target lists
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -76,7 +76,7 @@ static int	FigureColnameInternal(Node *node, char **name);
  *
  * node		the (untransformed) parse tree for the value expression.
  * expr		the transformed expression, or NULL if caller didn't do it yet.
- * exprKind	expression kind (EXPR_KIND_SELECT_TARGET, etc)
+ * exprKind expression kind (EXPR_KIND_SELECT_TARGET, etc)
  * colname	the column name to be assigned, or NULL if none yet set.
  * resjunk	true if the target should be marked resjunk, ie, it is not
  *			wanted in the final projected tuple.
@@ -311,6 +311,7 @@ markTargetListOrigin(ParseState *pstate, TargetEntry *tle,
 
 				Assert(attnum > 0 && attnum <= list_length(rte->joinaliasvars));
 				aliasvar = (Var *) list_nth(rte->joinaliasvars, attnum - 1);
+				/* We intentionally don't strip implicit coercions here */
 				markTargetListOrigin(pstate, tle, aliasvar, netlevelsup);
 			}
 			break;
@@ -1130,7 +1131,7 @@ ExpandColumnRefStar(ParseState *pstate, ColumnRef *cref,
  *		Transforms '*' (in the target list) into a list of targetlist entries.
  *
  * tlist entries are generated for each relation visible for unqualified
- * column name access.  We do not consider qualified-name-only entries because
+ * column name access.	We do not consider qualified-name-only entries because
  * that would include input tables of aliasless JOINs, NEW/OLD pseudo-entries,
  * etc.
  *
@@ -1461,6 +1462,8 @@ expandRecordVariable(ParseState *pstate, Var *var, int levelsup)
 			/* Join RTE --- recursively inspect the alias variable */
 			Assert(attnum > 0 && attnum <= list_length(rte->joinaliasvars));
 			expr = (Node *) list_nth(rte->joinaliasvars, attnum - 1);
+			Assert(expr != NULL);
+			/* We intentionally don't strip implicit coercions here */
 			if (IsA(expr, Var))
 				return expandRecordVariable(pstate, (Var *) expr, netlevelsup);
 			/* else fall through to inspect the expression */

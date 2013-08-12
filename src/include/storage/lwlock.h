@@ -4,7 +4,7 @@
  *	  Lightweight lock manager
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/lwlock.h
@@ -53,7 +53,7 @@ typedef enum LWLockId
 	ProcArrayLock,
 	SInvalReadLock,
 	SInvalWriteLock,
-	WALInsertLock,
+	WALBufMappingLock,
 	WALWriteLock,
 	ControlFileLock,
 	CheckpointLock,
@@ -79,6 +79,7 @@ typedef enum LWLockId
 	SerializablePredicateLockListLock,
 	OldSerXidLock,
 	SyncRepLock,
+	BackgroundWorkerLock,
 	/* Individual lock IDs end here */
 	FirstBufMappingLock,
 	FirstLockMgrLock = FirstBufMappingLock + NUM_BUFFER_PARTITIONS,

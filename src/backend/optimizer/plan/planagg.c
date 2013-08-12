@@ -17,7 +17,7 @@
  * scan all the rows anyway.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -48,6 +48,7 @@
 static bool find_minmax_aggs_walker(Node *node, List **context);
 static bool build_minmax_path(PlannerInfo *root, MinMaxAggInfo *mminfo,
 				  Oid eqop, Oid sortop, bool nulls_first);
+static void minmax_qp_callback(PlannerInfo *root, void *extra);
 static void make_agg_subplan(PlannerInfo *root, MinMaxAggInfo *mminfo);
 static Node *replace_aggs_with_params_mutator(Node *node, PlannerInfo *root);
 static Oid	fetch_agg_sort_op(Oid aggfnoid);
@@ -259,8 +260,8 @@ optimize_minmax_aggregates(PlannerInfo *root, List *tlist,
 	 * We have to replace Aggrefs with Params in equivalence classes too, else
 	 * ORDER BY or DISTINCT on an optimized aggregate will fail.  We don't
 	 * need to process child eclass members though, since they aren't of
-	 * interest anymore --- and replace_aggs_with_params_mutator isn't able
-	 * to handle Aggrefs containing translated child Vars, anyway.
+	 * interest anymore --- and replace_aggs_with_params_mutator isn't able to
+	 * handle Aggrefs containing translated child Vars, anyway.
 	 *
 	 * Note: at some point it might become necessary to mutate other data
 	 * structures too, such as the query's sortClause or distinctClause. Right
@@ -313,14 +314,36 @@ find_minmax_aggs_walker(Node *node, List **context)
 		ListCell   *l;
 
 		Assert(aggref->agglevelsup == 0);
-		if (list_length(aggref->args) != 1 || aggref->aggorder != NIL)
+		if (list_length(aggref->args) != 1)
 			return true;		/* it couldn't be MIN/MAX */
+
+		/*
+		 * ORDER BY is usually irrelevant for MIN/MAX, but it can change the
+		 * outcome if the aggsortop's operator class recognizes non-identical
+		 * values as equal.  For example, 4.0 and 4.00 are equal according to
+		 * numeric_ops, yet distinguishable.  If MIN() receives more than one
+		 * value equal to 4.0 and no value less than 4.0, it is unspecified
+		 * which of those equal values MIN() returns.  An ORDER BY expression
+		 * that differs for each of those equal values of the argument
+		 * expression makes the result predictable once again.  This is a
+		 * niche requirement, and we do not implement it with subquery paths.
+		 */
+		if (aggref->aggorder != NIL)
+			return true;
+
+		/*
+		 * We might implement the optimization when a FILTER clause is present
+		 * by adding the filter to the quals of the generated subquery.
+		 */
+		if (aggref->aggfilter != NULL)
+			return true;
 		/* note: we do not care if DISTINCT is mentioned ... */
-		curTarget = (TargetEntry *) linitial(aggref->args);
 
 		aggsortop = fetch_agg_sort_op(aggref->aggfnoid);
 		if (!OidIsValid(aggsortop))
 			return true;		/* not a MIN/MAX aggregate */
+
+		curTarget = (TargetEntry *) linitial(aggref->args);
 
 		if (contain_mutable_functions((Node *) curTarget->expr))
 			return true;		/* not potentially indexable */
@@ -378,9 +401,8 @@ build_minmax_path(PlannerInfo *root, MinMaxAggInfo *mminfo,
 	TargetEntry *tle;
 	NullTest   *ntest;
 	SortGroupClause *sortcl;
-	Path	   *cheapest_path;
+	RelOptInfo *final_rel;
 	Path	   *sorted_path;
-	double		dNumGroups;
 	Cost		path_cost;
 	double		path_fraction;
 
@@ -446,42 +468,31 @@ build_minmax_path(PlannerInfo *root, MinMaxAggInfo *mminfo,
 										   FLOAT8PASSBYVAL);
 
 	/*
-	 * Set up requested pathkeys.
-	 */
-	subroot->group_pathkeys = NIL;
-	subroot->window_pathkeys = NIL;
-	subroot->distinct_pathkeys = NIL;
-
-	subroot->sort_pathkeys =
-		make_pathkeys_for_sortclauses(subroot,
-									  parse->sortClause,
-									  parse->targetList,
-									  false);
-
-	subroot->query_pathkeys = subroot->sort_pathkeys;
-
-	/*
 	 * Generate the best paths for this query, telling query_planner that we
 	 * have LIMIT 1.
 	 */
-	query_planner(subroot, parse->targetList, 1.0, 1.0,
-				  &cheapest_path, &sorted_path, &dNumGroups);
+	subroot->tuple_fraction = 1.0;
+	subroot->limit_tuples = 1.0;
+
+	final_rel = query_planner(subroot, parse->targetList,
+							  minmax_qp_callback, NULL);
 
 	/*
-	 * Fail if no presorted path.  However, if query_planner determines that
-	 * the presorted path is also the cheapest, it will set sorted_path to
-	 * NULL ... don't be fooled.  (This is kind of a pain here, but it
-	 * simplifies life for grouping_planner, so leave it be.)
+	 * Get the best presorted path, that being the one that's cheapest for
+	 * fetching just one row.  If there's no such path, fail.
 	 */
+	if (final_rel->rows > 1.0)
+		path_fraction = 1.0 / final_rel->rows;
+	else
+		path_fraction = 1.0;
+
+	sorted_path =
+		get_cheapest_fractional_path_for_pathkeys(final_rel->pathlist,
+												  subroot->query_pathkeys,
+												  NULL,
+												  path_fraction);
 	if (!sorted_path)
-	{
-		if (cheapest_path &&
-			pathkeys_contained_in(subroot->sort_pathkeys,
-								  cheapest_path->pathkeys))
-			sorted_path = cheapest_path;
-		else
-			return false;
-	}
+		return false;
 
 	/*
 	 * Determine cost to get just the first row of the presorted path.
@@ -489,11 +500,6 @@ build_minmax_path(PlannerInfo *root, MinMaxAggInfo *mminfo,
 	 * Note: cost calculation here should match
 	 * compare_fractional_path_costs().
 	 */
-	if (sorted_path->parent->rows > 1.0)
-		path_fraction = 1.0 / sorted_path->parent->rows;
-	else
-		path_fraction = 1.0;
-
 	path_cost = sorted_path->startup_cost +
 		path_fraction * (sorted_path->total_cost - sorted_path->startup_cost);
 
@@ -503,6 +509,24 @@ build_minmax_path(PlannerInfo *root, MinMaxAggInfo *mminfo,
 	mminfo->pathcost = path_cost;
 
 	return true;
+}
+
+/*
+ * Compute query_pathkeys and other pathkeys during plan generation
+ */
+static void
+minmax_qp_callback(PlannerInfo *root, void *extra)
+{
+	root->group_pathkeys = NIL;
+	root->window_pathkeys = NIL;
+	root->distinct_pathkeys = NIL;
+
+	root->sort_pathkeys =
+		make_pathkeys_for_sortclauses(root,
+									  root->parse->sortClause,
+									  root->parse->targetList);
+
+	root->query_pathkeys = root->sort_pathkeys;
 }
 
 /*

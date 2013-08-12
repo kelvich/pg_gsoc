@@ -4,7 +4,7 @@
  *	  Private declarations for SP-GiST access method.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/spgist_private.h
@@ -652,7 +652,7 @@ extern void spgPageIndexMultiDelete(SpGistState *state, Page page,
 						OffsetNumber *itemnos, int nitems,
 						int firststate, int reststate,
 						BlockNumber blkno, OffsetNumber offnum);
-extern void spgdoinsert(Relation index, SpGistState *state,
+extern bool spgdoinsert(Relation index, SpGistState *state,
 			ItemPointer heapPtr, Datum datum, bool isnull);
 
 #endif   /* SPGIST_PRIVATE_H */

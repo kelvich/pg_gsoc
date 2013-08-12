@@ -7,7 +7,7 @@
  * This file contains WAL control and information functions.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogfuncs.c
@@ -56,7 +56,7 @@ pg_start_backup(PG_FUNCTION_ARGS)
 
 	backupidstr = text_to_cstring(backupid);
 
-	startpoint = do_pg_start_backup(backupidstr, fast, NULL);
+	startpoint = do_pg_start_backup(backupidstr, fast, NULL, NULL);
 
 	snprintf(startxlogstr, sizeof(startxlogstr), "%X/%X",
 			 (uint32) (startpoint >> 32), (uint32) startpoint);
@@ -82,7 +82,7 @@ pg_stop_backup(PG_FUNCTION_ARGS)
 	XLogRecPtr	stoppoint;
 	char		stopxlogstr[MAXFNAMELEN];
 
-	stoppoint = do_pg_stop_backup(NULL, true);
+	stoppoint = do_pg_stop_backup(NULL, true, NULL);
 
 	snprintf(stopxlogstr, sizeof(stopxlogstr), "%X/%X",
 			 (uint32) (stoppoint >> 32), (uint32) stoppoint);
@@ -248,7 +248,7 @@ pg_last_xlog_replay_location(PG_FUNCTION_ARGS)
 	XLogRecPtr	recptr;
 	char		location[MAXFNAMELEN];
 
-	recptr = GetXLogReplayRecPtr();
+	recptr = GetXLogReplayRecPtr(NULL);
 
 	if (recptr == 0)
 		PG_RETURN_NULL();
@@ -545,8 +545,8 @@ pg_xlog_location_diff(PG_FUNCTION_ARGS)
 	 * XXX: this won't handle values higher than 2^63 correctly.
 	 */
 	result = DatumGetNumeric(DirectFunctionCall2(numeric_sub,
-	   DirectFunctionCall1(int8_numeric, Int64GetDatum((int64) bytes1)),
-	   DirectFunctionCall1(int8_numeric, Int64GetDatum((int64) bytes2))));
+			DirectFunctionCall1(int8_numeric, Int64GetDatum((int64) bytes1)),
+		  DirectFunctionCall1(int8_numeric, Int64GetDatum((int64) bytes2))));
 
 	PG_RETURN_NUMERIC(result);
 }
@@ -584,7 +584,7 @@ pg_backup_start_time(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("could not read file \"%s\": %m",
-						BACKUP_LABEL_FILE)));
+							BACKUP_LABEL_FILE)));
 		PG_RETURN_NULL();
 	}
 
@@ -602,13 +602,13 @@ pg_backup_start_time(PG_FUNCTION_ARGS)
 	if (ferror(lfp))
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not read file \"%s\": %m", BACKUP_LABEL_FILE)));
+			   errmsg("could not read file \"%s\": %m", BACKUP_LABEL_FILE)));
 
 	/* Close the backup label file. */
 	if (FreeFile(lfp))
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not close file \"%s\": %m", BACKUP_LABEL_FILE)));
+			  errmsg("could not close file \"%s\": %m", BACKUP_LABEL_FILE)));
 
 	if (strlen(backup_start_time) == 0)
 		ereport(ERROR,

@@ -4,7 +4,7 @@
  *	  WAL replay logic for GiST.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -38,7 +38,7 @@ static MemoryContext opCtx;		/* working memory for operations */
  * follow-right flag, because that change is not included in the full-page
  * image.  To be sure that the intermediate state with the wrong flag value is
  * not visible to concurrent Hot Standby queries, this function handles
- * restoring the full-page image as well as updating the flag.  (Note that
+ * restoring the full-page image as well as updating the flag.	(Note that
  * we never need to do anything else to the child page in the current WAL
  * action.)
  */
@@ -64,13 +64,12 @@ gistRedoClearFollowRight(XLogRecPtr lsn, XLogRecord *record, int block_index,
 	 * of this record, because the updated NSN is not included in the full
 	 * page image.
 	 */
-	if (!XLByteLT(lsn, PageGetLSN(page)))
+	if (lsn >= PageGetLSN(page))
 	{
-		GistPageGetOpaque(page)->nsn = lsn;
+		GistPageSetNSN(page, lsn);
 		GistClearFollowRight(page);
 
 		PageSetLSN(page, lsn);
-		PageSetTLI(page, ThisTimeLineID);
 		MarkBufferDirty(buffer);
 	}
 	UnlockReleaseBuffer(buffer);
@@ -90,7 +89,7 @@ gistRedoPageUpdateRecord(XLogRecPtr lsn, XLogRecord *record)
 
 	/*
 	 * We need to acquire and hold lock on target page while updating the left
-	 * child page.  If we have a full-page image of target page, getting the
+	 * child page.	If we have a full-page image of target page, getting the
 	 * lock is a side-effect of restoring that image.  Note that even if the
 	 * target page no longer exists, we'll still attempt to replay the change
 	 * on the child page.
@@ -119,7 +118,7 @@ gistRedoPageUpdateRecord(XLogRecPtr lsn, XLogRecord *record)
 	page = (Page) BufferGetPage(buffer);
 
 	/* nothing more to do if change already applied */
-	if (XLByteLE(lsn, PageGetLSN(page)))
+	if (lsn <= PageGetLSN(page))
 	{
 		UnlockReleaseBuffer(buffer);
 		return;
@@ -185,7 +184,6 @@ gistRedoPageUpdateRecord(XLogRecPtr lsn, XLogRecord *record)
 
 	GistPageGetOpaque(page)->rightlink = InvalidBlockNumber;
 	PageSetLSN(page, lsn);
-	PageSetTLI(page, ThisTimeLineID);
 	MarkBufferDirty(buffer);
 	UnlockReleaseBuffer(buffer);
 }
@@ -271,7 +269,7 @@ gistRedoPageSplitRecord(XLogRecPtr lsn, XLogRecord *record)
 		if (newpage->header->blkno == GIST_ROOT_BLKNO)
 		{
 			GistPageGetOpaque(page)->rightlink = InvalidBlockNumber;
-			GistPageGetOpaque(page)->nsn = xldata->orignsn;
+			GistPageSetNSN(page, xldata->orignsn);
 			GistClearFollowRight(page);
 		}
 		else
@@ -280,7 +278,7 @@ gistRedoPageSplitRecord(XLogRecPtr lsn, XLogRecord *record)
 				GistPageGetOpaque(page)->rightlink = xlrec.page[i + 1].header->blkno;
 			else
 				GistPageGetOpaque(page)->rightlink = xldata->origrlink;
-			GistPageGetOpaque(page)->nsn = xldata->orignsn;
+			GistPageSetNSN(page, xldata->orignsn);
 			if (i < xlrec.data->npage - 1 && !isrootsplit &&
 				xldata->markfollowright)
 				GistMarkFollowRight(page);
@@ -289,7 +287,6 @@ gistRedoPageSplitRecord(XLogRecPtr lsn, XLogRecord *record)
 		}
 
 		PageSetLSN(page, lsn);
-		PageSetTLI(page, ThisTimeLineID);
 		MarkBufferDirty(buffer);
 
 		if (i == 0)
@@ -324,7 +321,6 @@ gistRedoCreateIndex(XLogRecPtr lsn, XLogRecord *record)
 	GISTInitBuffer(buffer, F_LEAF);
 
 	PageSetLSN(page, lsn);
-	PageSetTLI(page, ThisTimeLineID);
 
 	MarkBufferDirty(buffer);
 	UnlockReleaseBuffer(buffer);

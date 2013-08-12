@@ -3,7 +3,7 @@
  * hashinsert.c
  *	  Item insertion in hash tables for Postgres.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -90,7 +90,7 @@ _hash_doinsert(Relation rel, IndexTuple itup)
 
 		/*
 		 * If the previous iteration of this loop locked what is still the
-		 * correct target bucket, we are done.  Otherwise, drop any old lock
+		 * correct target bucket, we are done.	Otherwise, drop any old lock
 		 * and lock what now appears to be the correct bucket.
 		 */
 		if (retry)

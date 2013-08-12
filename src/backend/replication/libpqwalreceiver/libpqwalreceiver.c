@@ -6,7 +6,7 @@
  * loaded as a dynamic module to avoid linking the main server binary with
  * libpq.
  *
- * Portions Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -50,8 +50,8 @@ static void libpqrcv_connect(char *conninfo);
 static void libpqrcv_identify_system(TimeLineID *primary_tli);
 static void libpqrcv_readtimelinehistoryfile(TimeLineID tli, char **filename, char **content, int *len);
 static bool libpqrcv_startstreaming(TimeLineID tli, XLogRecPtr startpoint);
-static void libpqrcv_endstreaming(void);
-static int libpqrcv_receive(int timeout, char **buffer);
+static void libpqrcv_endstreaming(TimeLineID *next_tli);
+static int	libpqrcv_receive(int timeout, char **buffer);
 static void libpqrcv_send(const char *buffer, int nbytes);
 static void libpqrcv_disconnect(void);
 
@@ -199,35 +199,59 @@ libpqrcv_startstreaming(TimeLineID tli, XLogRecPtr startpoint)
 }
 
 /*
- * Stop streaming WAL data.
+ * Stop streaming WAL data. Returns the next timeline's ID in *next_tli, as
+ * reported by the server, or 0 if it did not report it.
  */
 static void
-libpqrcv_endstreaming(void)
+libpqrcv_endstreaming(TimeLineID *next_tli)
 {
 	PGresult   *res;
 
 	if (PQputCopyEnd(streamConn, NULL) <= 0 || PQflush(streamConn))
 		ereport(ERROR,
-				(errmsg("could not send end-of-streaming message to primary: %s",
+			(errmsg("could not send end-of-streaming message to primary: %s",
+					PQerrorMessage(streamConn))));
+
+	/*
+	 * After COPY is finished, we should receive a result set indicating the
+	 * next timeline's ID, or just CommandComplete if the server was shut
+	 * down.
+	 *
+	 * If we had not yet received CopyDone from the backend, PGRES_COPY_IN
+	 * would also be possible. However, at the moment this function is only
+	 * called after receiving CopyDone from the backend - the walreceiver
+	 * never terminates replication on its own initiative.
+	 */
+	res = PQgetResult(streamConn);
+	if (PQresultStatus(res) == PGRES_TUPLES_OK)
+	{
+		/*
+		 * Read the next timeline's ID. The server also sends the timeline's
+		 * starting point, but it is ignored.
+		 */
+		if (PQnfields(res) < 2 || PQntuples(res) != 1)
+			ereport(ERROR,
+					(errmsg("unexpected result set after end-of-streaming")));
+		*next_tli = pg_atoi(PQgetvalue(res, 0, 0), sizeof(uint32), 0);
+		PQclear(res);
+
+		/* the result set should be followed by CommandComplete */
+		res = PQgetResult(streamConn);
+	}
+	else
+		*next_tli = 0;
+
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		ereport(ERROR,
+				(errmsg("error reading result of streaming command: %s",
 						PQerrorMessage(streamConn))));
 
-	/* Read the command result after COPY is finished */
-
-	while ((res = PQgetResult(streamConn)) != NULL)
-	{
-		if (PQresultStatus(res) != PGRES_COMMAND_OK)
-			ereport(ERROR,
-					(errmsg("error reading result of streaming command: %s",
-							PQerrorMessage(streamConn))));
-		/*
-		 * If we had not yet received CopyDone from the backend, PGRES_COPY_IN
-		 * is also possible. However, at the moment this function is only
-		 * called after receiving CopyDone from the backend - the walreceiver
-		 * never terminates replication on its own initiative.
-		 */
-
-		PQclear(res);
-	}
+	/* Verify that there are no more results */
+	res = PQgetResult(streamConn);
+	if (res != NULL)
+		ereport(ERROR,
+				(errmsg("unexpected result after CommandComplete: %s",
+						PQerrorMessage(streamConn))));
 }
 
 /*
@@ -433,7 +457,7 @@ libpqrcv_disconnect(void)
  *	 0 if no data was available within timeout, or wait was interrupted
  *	 by signal.
  *
- *   -1 if the server ended the COPY.
+ *	 -1 if the server ended the COPY.
  *
  * ereports on error.
  */

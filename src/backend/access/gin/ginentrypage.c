@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -112,6 +112,12 @@ GinFormTuple(GinState *ginstate,
 	if (newsize != IndexTupleSize(itup))
 	{
 		itup = repalloc(itup, newsize);
+		/*
+		 * PostgreSQL 9.3 and earlier did not clear this new space, so we
+		 * might find uninitialized padding when reading tuples from disk.
+		 */
+		memset((char *) itup + IndexTupleSize(itup),
+			   0, newsize - IndexTupleSize(itup));
 
 		/* set new size in tuple header */
 		itup->t_info &= ~INDEX_SIZE_MASK;

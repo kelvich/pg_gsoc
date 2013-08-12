@@ -46,7 +46,7 @@ Lehman and Yao don't require read locks, but assume that in-memory
 copies of tree pages are unshared.  Postgres shares in-memory buffers
 among backends.  As a result, we do page-level read locking on btree
 pages in order to guarantee that no record is modified while we are
-examining it.  This reduces concurrency but guaranteees correct
+examining it.  This reduces concurrency but guarantees correct
 behavior.  An advantage is that when trading in a read lock for a
 write lock, we need not re-read the page after getting the write lock.
 Since we're also holding a pin on the shared buffer containing the
@@ -141,9 +141,10 @@ deletes index entries before deleting tuples, the super-exclusive lock
 guarantees that VACUUM can't delete any heap tuple that an indexscanning
 process might be about to visit.  (This guarantee works only for simple
 indexscans that visit the heap in sync with the index scan, not for bitmap
-scans.  We only need the guarantee when using non-MVCC snapshot rules such
-as SnapshotNow, so in practice this is only important for system catalog
-accesses.)
+scans.  We only need the guarantee when using non-MVCC snapshot rules; in
+an MVCC snapshot, it wouldn't matter if the heap tuple were replaced with
+an unrelated tuple at the same TID, because the new tuple wouldn't be
+visible to our scan anyway.)
 
 Because a page can be split even while someone holds a pin on it, it is
 possible that an indexscan will return items that are no longer stored on

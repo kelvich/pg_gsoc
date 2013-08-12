@@ -27,10 +27,11 @@
  * If the server is shut down, postmaster sends us SIGUSR2 after all
  * regular backends have exited and the shutdown checkpoint has been written.
  * This instruct walsender to send any outstanding WAL, including the
- * shutdown checkpoint record, and then exit.
+ * shutdown checkpoint record, wait for it to be replicated to the standby,
+ * and then exit.
  *
  *
- * Portions Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/walsender.c
@@ -49,7 +50,6 @@
 #include "funcapi.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
-#include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "nodes/replnodes.h"
 #include "replication/basebackup.h"
@@ -95,12 +95,13 @@ bool		am_cascading_walsender = false;		/* Am I cascading WAL to
 
 /* User-settable parameters for walsender */
 int			max_wal_senders = 0;	/* the maximum number of concurrent walsenders */
-int			wal_sender_timeout = 60 * 1000;	/* maximum time to send one
+int			wal_sender_timeout = 60 * 1000;		/* maximum time to send one
 												 * WAL data message */
+
 /*
  * State for WalSndWakeupRequest
  */
-bool wake_wal_senders = false;
+bool		wake_wal_senders = false;
 
 /*
  * These variables are used similarly to openLogFile/Id/Seg/Off,
@@ -110,15 +111,19 @@ static int	sendFile = -1;
 static XLogSegNo sendSegNo = 0;
 static uint32 sendOff = 0;
 
+/* Timeline ID of the currently open file */
+static TimeLineID curFileTimeLine = 0;
+
 /*
  * These variables keep track of the state of the timeline we're currently
  * sending. sendTimeLine identifies the timeline. If sendTimeLineIsHistoric,
  * the timeline is not the latest timeline on this server, and the server's
  * history forked off from that timeline at sendTimeLineValidUpto.
  */
-static TimeLineID	sendTimeLine = 0;
-static bool			sendTimeLineIsHistoric = false;
-static XLogRecPtr	sendTimeLineValidUpto = InvalidXLogRecPtr;
+static TimeLineID sendTimeLine = 0;
+static TimeLineID sendTimeLineNextTLI = 0;
+static bool sendTimeLineIsHistoric = false;
+static XLogRecPtr sendTimeLineValidUpto = InvalidXLogRecPtr;
 
 /*
  * How far have we sent WAL already? This is also advertised in
@@ -135,8 +140,9 @@ static StringInfoData tmpbuf;
  * Timestamp of the last receipt of the reply from the standby.
  */
 static TimestampTz last_reply_timestamp;
+
 /* Have we sent a heartbeat message asking for reply, since last reply? */
-static bool	ping_sent = false;
+static bool ping_sent = false;
 
 /*
  * While streaming WAL in Copy mode, streamingDoneSending is set to true
@@ -144,8 +150,8 @@ static bool	ping_sent = false;
  * after that. streamingDoneReceiving is set to true when we receive CopyDone
  * from the other end. When both become true, it's time to exit Copy mode.
  */
-static bool	streamingDoneSending;
-static bool	streamingDoneReceiving;
+static bool streamingDoneSending;
+static bool streamingDoneReceiving;
 
 /* Flags set by signal handlers for later service in main loop */
 static volatile sig_atomic_t got_SIGHUP = false;
@@ -169,6 +175,7 @@ static void WalSndLoop(void);
 static void InitWalSenderSlot(void);
 static void WalSndKill(int code, Datum arg);
 static void XLogSend(bool *caughtup);
+static XLogRecPtr GetStandbyFlushRecPtr(void);
 static void IdentifySystem(void);
 static void StartReplication(StartReplicationCmd *cmd);
 static void ProcessStandbyMessage(void);
@@ -189,12 +196,6 @@ InitWalSender(void)
 
 	/* Set up resource owner */
 	CurrentResourceOwner = ResourceOwnerCreate(NULL, "walsender top-level resource owner");
-
-	/*
-	 * Use the recovery target timeline ID during recovery
-	 */
-	if (am_cascading_walsender)
-		ThisTimeLineID = GetRecoveryTargetTLI();
 
 	/*
 	 * Let postmaster know that we're a WAL sender. Once we've declared us as
@@ -254,8 +255,8 @@ IdentifySystem(void)
 	am_cascading_walsender = RecoveryInProgress();
 	if (am_cascading_walsender)
 	{
+		/* this also updates ThisTimeLineID */
 		logptr = GetStandbyFlushRecPtr();
-		ThisTimeLineID = GetRecoveryTargetTLI();
 	}
 	else
 		logptr = GetInsertRecPtr();
@@ -320,12 +321,12 @@ SendTimeLineHistory(TimeLineHistoryCmd *cmd)
 	char		histfname[MAXFNAMELEN];
 	char		path[MAXPGPATH];
 	int			fd;
-	size_t		histfilelen;
-	size_t		bytesleft;
+	off_t		histfilelen;
+	off_t		bytesleft;
 
 	/*
-	 * Reply with a result set with one row, and two columns. The first col
-	 * is the name of the history file, 2nd is the contents.
+	 * Reply with a result set with one row, and two columns. The first col is
+	 * the name of the history file, 2nd is the contents.
 	 */
 
 	TLHistoryFileName(histfname, cmd->timeline);
@@ -345,7 +346,7 @@ SendTimeLineHistory(TimeLineHistoryCmd *cmd)
 	pq_sendint(&buf, 0, 2);		/* format code */
 
 	/* second field */
-	pq_sendstring(&buf, "content");	/* col name */
+	pq_sendstring(&buf, "content");		/* col name */
 	pq_sendint(&buf, 0, 4);		/* table oid */
 	pq_sendint(&buf, 0, 2);		/* attnum */
 	pq_sendint(&buf, BYTEAOID, 4);		/* type oid */
@@ -357,7 +358,7 @@ SendTimeLineHistory(TimeLineHistoryCmd *cmd)
 	/* Send a DataRow message */
 	pq_beginmessage(&buf, 'D');
 	pq_sendint(&buf, 2, 2);		/* # of columns */
-	pq_sendint(&buf, strlen(histfname), 4); /* col1 len */
+	pq_sendint(&buf, strlen(histfname), 4);		/* col1 len */
 	pq_sendbytes(&buf, histfname, strlen(histfname));
 
 	fd = OpenTransientFile(path, O_RDONLY | PG_BINARY, 0666);
@@ -375,15 +376,15 @@ SendTimeLineHistory(TimeLineHistoryCmd *cmd)
 	if (lseek(fd, 0, SEEK_SET) != 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not seek to beginning of file \"%s\": %m", path)));
+			errmsg("could not seek to beginning of file \"%s\": %m", path)));
 
 	pq_sendint(&buf, histfilelen, 4);	/* col2 len */
 
 	bytesleft = histfilelen;
 	while (bytesleft > 0)
 	{
-		char rbuf[BLCKSZ];
-		int nread;
+		char		rbuf[BLCKSZ];
+		int			nread;
 
 		nread = read(fd, rbuf, sizeof(rbuf));
 		if (nread <= 0)
@@ -409,6 +410,7 @@ static void
 StartReplication(StartReplicationCmd *cmd)
 {
 	StringInfoData buf;
+	XLogRecPtr	FlushPtr;
 
 	/*
 	 * We assume here that we're logging enough information in the WAL for
@@ -421,8 +423,17 @@ StartReplication(StartReplicationCmd *cmd)
 
 	/*
 	 * Select the timeline. If it was given explicitly by the client, use
-	 * that. Otherwise use the current ThisTimeLineID.
+	 * that. Otherwise use the timeline of the last replayed record, which is
+	 * kept in ThisTimeLineID.
 	 */
+	if (am_cascading_walsender)
+	{
+		/* this also updates ThisTimeLineID */
+		FlushPtr = GetStandbyFlushRecPtr();
+	}
+	else
+		FlushPtr = GetFlushRecPtr();
+
 	if (cmd->timeline != 0)
 	{
 		XLogRecPtr	switchpoint;
@@ -440,11 +451,12 @@ StartReplication(StartReplicationCmd *cmd)
 			sendTimeLineIsHistoric = true;
 
 			/*
-			 * Check that the timeline the client requested for exists, and the
-			 * requested start location is on that timeline.
+			 * Check that the timeline the client requested for exists, and
+			 * the requested start location is on that timeline.
 			 */
 			timeLineHistory = readTimeLineHistory(ThisTimeLineID);
-			switchpoint = tliSwitchPoint(cmd->timeline, timeLineHistory);
+			switchpoint = tliSwitchPoint(cmd->timeline, timeLineHistory,
+										 &sendTimeLineNextTLI);
 			list_free_deep(timeLineHistory);
 
 			/*
@@ -452,28 +464,28 @@ StartReplication(StartReplicationCmd *cmd)
 			 * requested startpoint is on that timeline in our history.
 			 *
 			 * This is quite loose on purpose. We only check that we didn't
-			 * fork off the requested timeline before the switchpoint. We don't
-			 * check that we switched *to* it before the requested starting
-			 * point. This is because the client can legitimately request to
-			 * start replication from the beginning of the WAL segment that
-			 * contains switchpoint, but on the new timeline, so that it
-			 * doesn't end up with a partial segment. If you ask for a too old
-			 * starting point, you'll get an error later when we fail to find
-			 * the requested WAL segment in pg_xlog.
+			 * fork off the requested timeline before the switchpoint. We
+			 * don't check that we switched *to* it before the requested
+			 * starting point. This is because the client can legitimately
+			 * request to start replication from the beginning of the WAL
+			 * segment that contains switchpoint, but on the new timeline, so
+			 * that it doesn't end up with a partial segment. If you ask for a
+			 * too old starting point, you'll get an error later when we fail
+			 * to find the requested WAL segment in pg_xlog.
 			 *
 			 * XXX: we could be more strict here and only allow a startpoint
 			 * that's older than the switchpoint, if it it's still in the same
 			 * WAL segment.
 			 */
 			if (!XLogRecPtrIsInvalid(switchpoint) &&
-				XLByteLT(switchpoint, cmd->startpoint))
+				switchpoint < cmd->startpoint)
 			{
 				ereport(ERROR,
 						(errmsg("requested starting point %X/%X on timeline %u is not in this server's history",
 								(uint32) (cmd->startpoint >> 32),
 								(uint32) (cmd->startpoint),
 								cmd->timeline),
-						 errdetail("This server's history forked from timeline %u at %X/%X",
+						 errdetail("This server's history forked from timeline %u at %X/%X.",
 								   cmd->timeline,
 								   (uint32) (switchpoint >> 32),
 								   (uint32) (switchpoint))));
@@ -491,17 +503,16 @@ StartReplication(StartReplicationCmd *cmd)
 	streamingDoneSending = streamingDoneReceiving = false;
 
 	/* If there is nothing to stream, don't even enter COPY mode */
-	if (!sendTimeLineIsHistoric ||
-		XLByteLT(cmd->startpoint, sendTimeLineValidUpto))
+	if (!sendTimeLineIsHistoric || cmd->startpoint < sendTimeLineValidUpto)
 	{
-		XLogRecPtr FlushPtr;
 		/*
-		 * When we first start replication the standby will be behind the primary.
-		 * For some applications, for example, synchronous replication, it is
-		 * important to have a clear state for this initial catchup mode, so we
-		 * can trigger actions when we change streaming state later. We may stay
-		 * in this state for a long time, which is exactly why we want to be able
-		 * to monitor whether or not we are still here.
+		 * When we first start replication the standby will be behind the
+		 * primary. For some applications, for example, synchronous
+		 * replication, it is important to have a clear state for this initial
+		 * catchup mode, so we can trigger actions when we change streaming
+		 * state later. We may stay in this state for a long time, which is
+		 * exactly why we want to be able to monitor whether or not we are
+		 * still here.
 		 */
 		WalSndSetState(WALSNDSTATE_CATCHUP);
 
@@ -516,11 +527,7 @@ StartReplication(StartReplicationCmd *cmd)
 		 * Don't allow a request to stream from a future point in WAL that
 		 * hasn't been flushed to disk in this server yet.
 		 */
-		if (am_cascading_walsender)
-			FlushPtr = GetStandbyFlushRecPtr();
-		else
-			FlushPtr = GetFlushRecPtr();
-		if (XLByteLT(FlushPtr, cmd->startpoint))
+		if (FlushPtr < cmd->startpoint)
 		{
 			ereport(ERROR,
 					(errmsg("requested starting point %X/%X is ahead of the WAL flush position of this server %X/%X",
@@ -554,10 +561,65 @@ StartReplication(StartReplicationCmd *cmd)
 		if (walsender_ready_to_stop)
 			proc_exit(0);
 		WalSndSetState(WALSNDSTATE_STARTUP);
+
+		Assert(streamingDoneSending && streamingDoneReceiving);
 	}
 
-	/* Get out of COPY mode (CommandComplete). */
-	EndCommand("COPY 0", DestRemote);
+	/*
+	 * Copy is finished now. Send a single-row result set indicating the next
+	 * timeline.
+	 */
+	if (sendTimeLineIsHistoric)
+	{
+		char		tli_str[11];
+		char		startpos_str[8 + 1 + 8 + 1];
+
+		snprintf(tli_str, sizeof(tli_str), "%u", sendTimeLineNextTLI);
+		snprintf(startpos_str, sizeof(startpos_str), "%X/%X",
+				 (uint32) (sendTimeLineValidUpto >> 32),
+				 (uint32) sendTimeLineValidUpto);
+
+		pq_beginmessage(&buf, 'T');		/* RowDescription */
+		pq_sendint(&buf, 2, 2); /* 2 fields */
+
+		/* Field header */
+		pq_sendstring(&buf, "next_tli");
+		pq_sendint(&buf, 0, 4); /* table oid */
+		pq_sendint(&buf, 0, 2); /* attnum */
+
+		/*
+		 * int8 may seem like a surprising data type for this, but in theory
+		 * int4 would not be wide enough for this, as TimeLineID is unsigned.
+		 */
+		pq_sendint(&buf, INT8OID, 4);	/* type oid */
+		pq_sendint(&buf, -1, 2);
+		pq_sendint(&buf, 0, 4);
+		pq_sendint(&buf, 0, 2);
+
+		pq_sendstring(&buf, "next_tli_startpos");
+		pq_sendint(&buf, 0, 4); /* table oid */
+		pq_sendint(&buf, 0, 2); /* attnum */
+		pq_sendint(&buf, TEXTOID, 4);	/* type oid */
+		pq_sendint(&buf, -1, 2);
+		pq_sendint(&buf, 0, 4);
+		pq_sendint(&buf, 0, 2);
+		pq_endmessage(&buf);
+
+		/* Data row */
+		pq_beginmessage(&buf, 'D');
+		pq_sendint(&buf, 2, 2); /* number of columns */
+
+		pq_sendint(&buf, strlen(tli_str), 4);	/* length */
+		pq_sendbytes(&buf, tli_str, strlen(tli_str));
+
+		pq_sendint(&buf, strlen(startpos_str), 4);		/* length */
+		pq_sendbytes(&buf, startpos_str, strlen(startpos_str));
+
+		pq_endmessage(&buf);
+	}
+
+	/* Send CommandComplete message */
+	pq_puttextmessage('C', "START_STREAMING");
 }
 
 /*
@@ -634,12 +696,7 @@ ProcessRepliesIfAny(void)
 	int			r;
 	bool		received = false;
 
-	/*
-	 * If we already received a CopyDone from the frontend, any subsequent
-	 * message is the beginning of a new command, and should be processed in
-	 * the main processing loop.
-	 */
-	while (!streamingDoneReceiving)
+	for (;;)
 	{
 		r = pq_getbyte_if_available(&firstchar);
 		if (r < 0)
@@ -655,6 +712,19 @@ ProcessRepliesIfAny(void)
 			/* no data available without blocking */
 			break;
 		}
+
+		/*
+		 * If we already received a CopyDone from the frontend, the frontend
+		 * should not send us anything until we've closed our end of the COPY.
+		 * XXX: In theory, the frontend could already send the next command
+		 * before receiving the CopyDone, but libpq doesn't currently allow
+		 * that.
+		 */
+		if (streamingDoneReceiving && firstchar != 'X')
+			ereport(FATAL,
+					(errcode(ERRCODE_PROTOCOL_VIOLATION),
+					 errmsg("unexpected standby message type \"%c\", after receiving CopyDone",
+							firstchar)));
 
 		/* Handle the very limited subset of commands expected in this phase */
 		switch (firstchar)
@@ -775,7 +845,7 @@ ProcessStandbyReplyMessage(void)
 	writePtr = pq_getmsgint64(&reply_message);
 	flushPtr = pq_getmsgint64(&reply_message);
 	applyPtr = pq_getmsgint64(&reply_message);
-	(void) pq_getmsgint64(&reply_message);	/* sendTime; not used ATM */
+	(void) pq_getmsgint64(&reply_message);		/* sendTime; not used ATM */
 	replyRequested = pq_getmsgbyte(&reply_message);
 
 	elog(DEBUG2, "write %X/%X flush %X/%X apply %X/%X%s",
@@ -822,7 +892,7 @@ ProcessStandbyHSFeedbackMessage(void)
 	 * Decipher the reply message. The caller already consumed the msgtype
 	 * byte.
 	 */
-	(void) pq_getmsgint64(&reply_message);	/* sendTime; not used ATM */
+	(void) pq_getmsgint64(&reply_message);		/* sendTime; not used ATM */
 	feedbackXmin = pq_getmsgint(&reply_message, 4);
 	feedbackEpoch = pq_getmsgint(&reply_message, 4);
 
@@ -830,9 +900,12 @@ ProcessStandbyHSFeedbackMessage(void)
 		 feedbackXmin,
 		 feedbackEpoch);
 
-	/* Ignore invalid xmin (can't actually happen with current walreceiver) */
+	/* Unset WalSender's xmin if the feedback message value is invalid */
 	if (!TransactionIdIsNormal(feedbackXmin))
+	{
+		MyPgXact->xmin = InvalidTransactionId;
 		return;
+	}
 
 	/*
 	 * Check that the provided xmin/epoch are sane, that is, not in the future
@@ -864,11 +937,11 @@ ProcessStandbyHSFeedbackMessage(void)
 	 * cleanup conflicts on the standby server.
 	 *
 	 * There is a small window for a race condition here: although we just
-	 * checked that feedbackXmin precedes nextXid, the nextXid could have gotten
-	 * advanced between our fetching it and applying the xmin below, perhaps
-	 * far enough to make feedbackXmin wrap around.  In that case the xmin we
-	 * set here would be "in the future" and have no effect.  No point in
-	 * worrying about this since it's too late to save the desired data
+	 * checked that feedbackXmin precedes nextXid, the nextXid could have
+	 * gotten advanced between our fetching it and applying the xmin below,
+	 * perhaps far enough to make feedbackXmin wrap around.  In that case the
+	 * xmin we set here would be "in the future" and have no effect.  No point
+	 * in worrying about this since it's too late to save the desired data
 	 * anyway.	Assuming that the standby sends us an increasing sequence of
 	 * xmins, this could only happen during the first reply cycle, else our
 	 * own xmin would prevent nextXid from advancing so far.
@@ -901,8 +974,8 @@ WalSndLoop(void)
 	ping_sent = false;
 
 	/*
-	 * Loop until we reach the end of this timeline or the client requests
-	 * to stop streaming.
+	 * Loop until we reach the end of this timeline or the client requests to
+	 * stop streaming.
 	 */
 	for (;;)
 	{
@@ -973,7 +1046,8 @@ WalSndLoop(void)
 
 			/*
 			 * When SIGUSR2 arrives, we send any outstanding logs up to the
-			 * shutdown checkpoint record (i.e., the latest record) and exit.
+			 * shutdown checkpoint record (i.e., the latest record), wait
+			 * for them to be replicated to the standby, and exit.
 			 * This may be a normal termination at shutdown, or a promotion,
 			 * the walsender is not sure which.
 			 */
@@ -981,7 +1055,8 @@ WalSndLoop(void)
 			{
 				/* ... let's just be real sure we're caught up ... */
 				XLogSend(&caughtup);
-				if (caughtup && !pq_is_send_pending())
+				if (caughtup && sentPtr == MyWalSnd->flush &&
+					!pq_is_send_pending())
 				{
 					/* Inform the standby that XLOG streaming is done */
 					EndCommand("COPY 0", DestRemote);
@@ -1005,10 +1080,8 @@ WalSndLoop(void)
 			long		sleeptime = 10000;		/* 10 s */
 			int			wakeEvents;
 
-			wakeEvents = WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_TIMEOUT;
-
-			if (!streamingDoneReceiving)
-				wakeEvents |= WL_SOCKET_READABLE;
+			wakeEvents = WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_TIMEOUT |
+				WL_SOCKET_READABLE;
 
 			if (pq_is_send_pending())
 				wakeEvents |= WL_SOCKET_WRITEABLE;
@@ -1016,8 +1089,8 @@ WalSndLoop(void)
 			{
 				/*
 				 * If half of wal_sender_timeout has lapsed without receiving
-				 * any reply from standby, send a keep-alive message to standby
-				 * requesting an immediate reply.
+				 * any reply from standby, send a keep-alive message to
+				 * standby requesting an immediate reply.
 				 */
 				timeout = TimestampTzPlusMilliseconds(last_reply_timestamp,
 													  wal_sender_timeout / 2);
@@ -1067,6 +1140,7 @@ WalSndLoop(void)
 	return;
 
 send_failure:
+
 	/*
 	 * Get here on send failure.  Clean up and exit.
 	 *
@@ -1115,7 +1189,7 @@ InitWalSenderSlot(void)
 			 * Found a free slot. Reserve it for us.
 			 */
 			walsnd->pid = MyProcPid;
-			MemSet(&walsnd->sentPtr, 0, sizeof(XLogRecPtr));
+			walsnd->sentPtr = InvalidXLogRecPtr;
 			walsnd->state = WALSNDSTATE_STARTUP;
 			SpinLockRelease(&walsnd->mutex);
 			/* don't need the lock anymore */
@@ -1164,13 +1238,12 @@ WalSndKill(int code, Datum arg)
  * always be one descriptor left open until the process ends, but never
  * more than one.
  */
-void
-XLogRead(char *buf, TimeLineID tli, XLogRecPtr startptr, Size count)
+static void
+XLogRead(char *buf, XLogRecPtr startptr, Size count)
 {
 	char	   *p;
 	XLogRecPtr	recptr;
 	Size		nbytes;
-	XLogSegNo	lastRemovedSegNo;
 	XLogSegNo	segno;
 
 retry:
@@ -1186,7 +1259,7 @@ retry:
 
 		startoff = recptr % XLogSegSize;
 
-		if (sendFile < 0 || !XLByteInSeg(recptr, sendSegNo) || sendTimeLine != tli)
+		if (sendFile < 0 || !XLByteInSeg(recptr, sendSegNo))
 		{
 			char		path[MAXPGPATH];
 
@@ -1194,9 +1267,45 @@ retry:
 			if (sendFile >= 0)
 				close(sendFile);
 
-			sendTimeLine = tli;
 			XLByteToSeg(recptr, sendSegNo);
-			XLogFilePath(path, sendTimeLine, sendSegNo);
+
+			/*-------
+			 * When reading from a historic timeline, and there is a timeline
+			 * switch within this segment, read from the WAL segment belonging
+			 * to the new timeline.
+			 *
+			 * For example, imagine that this server is currently on timeline
+			 * 5, and we're streaming timeline 4. The switch from timeline 4
+			 * to 5 happened at 0/13002088. In pg_xlog, we have these files:
+			 *
+			 * ...
+			 * 000000040000000000000012
+			 * 000000040000000000000013
+			 * 000000050000000000000013
+			 * 000000050000000000000014
+			 * ...
+			 *
+			 * In this situation, when requested to send the WAL from
+			 * segment 0x13, on timeline 4, we read the WAL from file
+			 * 000000050000000000000013. Archive recovery prefers files from
+			 * newer timelines, so if the segment was restored from the
+			 * archive on this server, the file belonging to the old timeline,
+			 * 000000040000000000000013, might not exist. Their contents are
+			 * equal up to the switchpoint, because at a timeline switch, the
+			 * used portion of the old segment is copied to the new file.
+			 *-------
+			 */
+			curFileTimeLine = sendTimeLine;
+			if (sendTimeLineIsHistoric)
+			{
+				XLogSegNo	endSegNo;
+
+				XLByteToSeg(sendTimeLineValidUpto, endSegNo);
+				if (sendSegNo == endSegNo)
+					curFileTimeLine = sendTimeLineNextTLI;
+			}
+
+			XLogFilePath(path, curFileTimeLine, sendSegNo);
 
 			sendFile = BasicOpenFile(path, O_RDONLY | PG_BINARY, 0);
 			if (sendFile < 0)
@@ -1210,7 +1319,7 @@ retry:
 					ereport(ERROR,
 							(errcode_for_file_access(),
 							 errmsg("requested WAL segment %s has already been removed",
-									XLogFileNameP(sendTimeLine, sendSegNo))));
+								XLogFileNameP(curFileTimeLine, sendSegNo))));
 				else
 					ereport(ERROR,
 							(errcode_for_file_access(),
@@ -1226,9 +1335,9 @@ retry:
 			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
-						 errmsg("could not seek in log segment %s to offset %u: %m",
-								XLogFileNameP(sendTimeLine, sendSegNo),
-								startoff)));
+				  errmsg("could not seek in log segment %s to offset %u: %m",
+						 XLogFileNameP(curFileTimeLine, sendSegNo),
+						 startoff)));
 			sendOff = startoff;
 		}
 
@@ -1243,13 +1352,13 @@ retry:
 		{
 			ereport(ERROR,
 					(errcode_for_file_access(),
-			errmsg("could not read from log segment %s, offset %u, length %lu: %m",
-				   XLogFileNameP(sendTimeLine, sendSegNo),
-				   sendOff, (unsigned long) segbytes)));
+					 errmsg("could not read from log segment %s, offset %u, length %lu: %m",
+							XLogFileNameP(curFileTimeLine, sendSegNo),
+							sendOff, (unsigned long) segbytes)));
 		}
 
 		/* Update state for read */
-		XLByteAdvance(recptr, readbytes);
+		recptr += readbytes;
 
 		sendOff += readbytes;
 		nbytes -= readbytes;
@@ -1263,13 +1372,8 @@ retry:
 	 * read() succeeds in that case, but the data we tried to read might
 	 * already have been overwritten with new WAL records.
 	 */
-	XLogGetLastRemoved(&lastRemovedSegNo);
 	XLByteToSeg(startptr, segno);
-	if (segno <= lastRemovedSegNo)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("requested WAL segment %s has already been removed",
-						XLogFileNameP(sendTimeLine, segno))));
+	CheckXLogRemoved(segno, ThisTimeLineID);
 
 	/*
 	 * During recovery, the currently-open WAL file might be replaced with the
@@ -1310,7 +1414,6 @@ static void
 XLogSend(bool *caughtup)
 {
 	XLogRecPtr	SendRqstPtr;
-	XLogRecPtr	FlushPtr;
 	XLogRecPtr	startptr;
 	XLogRecPtr	endptr;
 	Size		nbytes;
@@ -1321,33 +1424,38 @@ XLogSend(bool *caughtup)
 		return;
 	}
 
-	/*
-	 * Attempt to send all data that's already been written out and fsync'd to
-	 * disk.  We cannot go further than what's been written out given the
-	 * current implementation of XLogRead().  And in any case it's unsafe to
-	 * send WAL that is not securely down to disk on the master: if the master
-	 * subsequently crashes and restarts, slaves must not have applied any WAL
-	 * that gets lost on the master.
-	 */
-	if (am_cascading_walsender)
-		FlushPtr = GetStandbyFlushRecPtr();
-	else
-		FlushPtr = GetFlushRecPtr();
-
-	/*
-	 * In a cascading standby, the current recovery target timeline can
-	 * change, or we can be promoted. In either case, the current timeline
-	 * becomes historic. We need to detect that so that we don't try to stream
-	 * past the point where we switched to another timeline. It's checked
-	 * after calculating FlushPtr, to avoid a race condition: if the timeline
-	 * becomes historic just after we checked that it was still current, it
-	 * should still be OK to stream it up to the FlushPtr that was calculated
-	 * before it became historic.
-	 */
-	if (!sendTimeLineIsHistoric && am_cascading_walsender)
+	/* Figure out how far we can safely send the WAL. */
+	if (sendTimeLineIsHistoric)
 	{
+		/*
+		 * Streaming an old timeline timeline that's in this server's history,
+		 * but is not the one we're currently inserting or replaying. It can
+		 * be streamed up to the point where we switched off that timeline.
+		 */
+		SendRqstPtr = sendTimeLineValidUpto;
+	}
+	else if (am_cascading_walsender)
+	{
+		/*
+		 * Streaming the latest timeline on a standby.
+		 *
+		 * Attempt to send all WAL that has already been replayed, so that we
+		 * know it's valid. If we're receiving WAL through streaming
+		 * replication, it's also OK to send any WAL that has been received
+		 * but not replayed.
+		 *
+		 * The timeline we're recovering from can change, or we can be
+		 * promoted. In either case, the current timeline becomes historic. We
+		 * need to detect that so that we don't try to stream past the point
+		 * where we switched to another timeline. We check for promotion or
+		 * timeline switch after calculating FlushPtr, to avoid a race
+		 * condition: if the timeline becomes historic just after we checked
+		 * that it was still current, it's still be OK to stream it up to the
+		 * FlushPtr that was calculated before it became historic.
+		 */
 		bool		becameHistoric = false;
-		TimeLineID	targetTLI;
+
+		SendRqstPtr = GetStandbyFlushRecPtr();
 
 		if (!RecoveryInProgress())
 		{
@@ -1355,7 +1463,6 @@ XLogSend(bool *caughtup)
 			 * We have been promoted. RecoveryInProgress() updated
 			 * ThisTimeLineID to the new current timeline.
 			 */
-			targetTLI = ThisTimeLineID;
 			am_cascading_walsender = false;
 			becameHistoric = true;
 		}
@@ -1363,11 +1470,10 @@ XLogSend(bool *caughtup)
 		{
 			/*
 			 * Still a cascading standby. But is the timeline we're sending
-			 * still the recovery target timeline?
+			 * still the one recovery is recovering from? ThisTimeLineID was
+			 * updated by the GetStandbyFlushRecPtr() call above.
 			 */
-			targetTLI = GetRecoveryTargetTLI();
-
-			if (targetTLI != sendTimeLine)
+			if (sendTimeLine != ThisTimeLineID)
 				becameHistoric = true;
 		}
 
@@ -1380,29 +1486,47 @@ XLogSend(bool *caughtup)
 			 */
 			List	   *history;
 
-			history = readTimeLineHistory(targetTLI);
-			sendTimeLineValidUpto = tliSwitchPoint(sendTimeLine, history);
-			Assert(XLByteLE(sentPtr, sendTimeLineValidUpto));
+			history = readTimeLineHistory(ThisTimeLineID);
+			sendTimeLineValidUpto = tliSwitchPoint(sendTimeLine, history, &sendTimeLineNextTLI);
+
+			Assert(sendTimeLine < sendTimeLineNextTLI);
 			list_free_deep(history);
 
-			/* the switchpoint should be >= current send pointer */
-			if (!XLByteLE(sentPtr, sendTimeLineValidUpto))
-				elog(ERROR, "server switched off timeline %u at %X/%X, but walsender already streamed up to %X/%X",
-					 sendTimeLine,
-					 (uint32) (sendTimeLineValidUpto >> 32),
-					 (uint32) sendTimeLineValidUpto,
-					 (uint32) (sentPtr >> 32),
-					 (uint32) sentPtr);
-
 			sendTimeLineIsHistoric = true;
+
+			SendRqstPtr = sendTimeLineValidUpto;
 		}
+	}
+	else
+	{
+		/*
+		 * Streaming the current timeline on a master.
+		 *
+		 * Attempt to send all data that's already been written out and
+		 * fsync'd to disk.  We cannot go further than what's been written out
+		 * given the current implementation of XLogRead().	And in any case
+		 * it's unsafe to send WAL that is not securely down to disk on the
+		 * master: if the master subsequently crashes and restarts, slaves
+		 * must not have applied any WAL that gets lost on the master.
+		 */
+		SendRqstPtr = GetFlushRecPtr();
 	}
 
 	/*
 	 * If this is a historic timeline and we've reached the point where we
 	 * forked to the next timeline, stop streaming.
+	 *
+	 * Note: We might already have sent WAL > sendTimeLineValidUpto. The
+	 * startup process will normally replay all WAL that has been received
+	 * from the master, before promoting, but if the WAL streaming is
+	 * terminated at a WAL page boundary, the valid portion of the timeline
+	 * might end in the middle of a WAL record. We might've already sent the
+	 * first half of that partial WAL record to the cascading standby, so that
+	 * sentPtr > sendTimeLineValidUpto. That's OK; the cascading standby can't
+	 * replay the partial WAL record either, so it can still follow our
+	 * timeline switch.
 	 */
-	if (sendTimeLineIsHistoric && XLByteLE(sendTimeLineValidUpto, sentPtr))
+	if (sendTimeLineIsHistoric && sendTimeLineValidUpto <= sentPtr)
 	{
 		/* close the current file. */
 		if (sendFile >= 0)
@@ -1414,20 +1538,16 @@ XLogSend(bool *caughtup)
 		streamingDoneSending = true;
 
 		*caughtup = true;
+
+		elog(DEBUG1, "walsender reached end of timeline at %X/%X (sent up to %X/%X)",
+			 (uint32) (sendTimeLineValidUpto >> 32), (uint32) sendTimeLineValidUpto,
+			 (uint32) (sentPtr >> 32), (uint32) sentPtr);
 		return;
 	}
 
-	/*
-	 * Stream up to the point known to be flushed to disk, or to the end of
-	 * this timeline, whichever comes first.
-	 */
-	if (sendTimeLineIsHistoric && XLByteLT(sendTimeLineValidUpto, FlushPtr))
-		SendRqstPtr = sendTimeLineValidUpto;
-	else
-		SendRqstPtr = FlushPtr;
-
-	Assert(XLByteLE(sentPtr, SendRqstPtr));
-	if (XLByteLE(SendRqstPtr, sentPtr))
+	/* Do we have any work to do? */
+	Assert(sentPtr <= SendRqstPtr);
+	if (SendRqstPtr <= sentPtr)
 	{
 		*caughtup = true;
 		return;
@@ -1446,10 +1566,10 @@ XLogSend(bool *caughtup)
 	 */
 	startptr = sentPtr;
 	endptr = startptr;
-	XLByteAdvance(endptr, MAX_SEND_SIZE);
+	endptr += MAX_SEND_SIZE;
 
 	/* if we went beyond SendRqstPtr, back off */
-	if (XLByteLE(SendRqstPtr, endptr))
+	if (SendRqstPtr <= endptr)
 	{
 		endptr = SendRqstPtr;
 		if (sendTimeLineIsHistoric)
@@ -1474,15 +1594,15 @@ XLogSend(bool *caughtup)
 	pq_sendbyte(&output_message, 'w');
 
 	pq_sendint64(&output_message, startptr);	/* dataStart */
-	pq_sendint64(&output_message, SendRqstPtr);	/* walEnd */
-	pq_sendint64(&output_message, 0);			/* sendtime, filled in last */
+	pq_sendint64(&output_message, SendRqstPtr); /* walEnd */
+	pq_sendint64(&output_message, 0);	/* sendtime, filled in last */
 
 	/*
 	 * Read the log directly into the output buffer to avoid extra memcpy
 	 * calls.
 	 */
 	enlargeStringInfo(&output_message, nbytes);
-	XLogRead(&output_message.data[output_message.len], sendTimeLine, startptr, nbytes);
+	XLogRead(&output_message.data[output_message.len], startptr, nbytes);
 	output_message.len += nbytes;
 	output_message.data[output_message.len] = '\0';
 
@@ -1519,6 +1639,41 @@ XLogSend(bool *caughtup)
 	}
 
 	return;
+}
+
+/*
+ * Returns the latest point in WAL that has been safely flushed to disk, and
+ * can be sent to the standby. This should only be called when in recovery,
+ * ie. we're streaming to a cascaded standby.
+ *
+ * As a side-effect, ThisTimeLineID is updated to the TLI of the last
+ * replayed WAL record.
+ */
+static XLogRecPtr
+GetStandbyFlushRecPtr(void)
+{
+	XLogRecPtr	replayPtr;
+	TimeLineID	replayTLI;
+	XLogRecPtr	receivePtr;
+	TimeLineID	receiveTLI;
+	XLogRecPtr	result;
+
+	/*
+	 * We can safely send what's already been replayed. Also, if walreceiver
+	 * is streaming WAL from the same timeline, we can send anything that it
+	 * has streamed, but hasn't been replayed yet.
+	 */
+
+	receivePtr = GetWalRcvWriteRecPtr(NULL, &receiveTLI);
+	replayPtr = GetXLogReplayRecPtr(&replayTLI);
+
+	ThisTimeLineID = replayTLI;
+
+	result = replayPtr;
+	if (receiveTLI == ThisTimeLineID && receivePtr > replayPtr)
+		result = receivePtr;
+
+	return result;
 }
 
 /*
@@ -1576,7 +1731,8 @@ WalSndLastCycleHandler(SIGNAL_ARGS)
 	/*
 	 * If replication has not yet started, die like with SIGTERM. If
 	 * replication is active, only set a flag and wake up the main loop. It
-	 * will send any outstanding WAL, and then exit gracefully.
+	 * will send any outstanding WAL, wait for it to be replicated to
+	 * the standby, and then exit gracefully.
 	 */
 	if (!replication_active)
 		kill(MyProcPid, SIGTERM);
@@ -1596,8 +1752,8 @@ WalSndSignals(void)
 	pqsignal(SIGHUP, WalSndSigHupHandler);		/* set flag to read config
 												 * file */
 	pqsignal(SIGINT, SIG_IGN);	/* not used */
-	pqsignal(SIGTERM, die);						/* request shutdown */
-	pqsignal(SIGQUIT, quickdie);				/* hard crash time */
+	pqsignal(SIGTERM, die);		/* request shutdown */
+	pqsignal(SIGQUIT, quickdie);	/* hard crash time */
 	InitializeTimeouts();		/* establishes SIGALRM handler */
 	pqsignal(SIGPIPE, SIG_IGN);
 	pqsignal(SIGUSR1, WalSndXLogSendHandler);	/* request WAL sending */
@@ -1923,7 +2079,7 @@ GetOldestWALSendPointer(void)
 		if (recptr.xlogid == 0 && recptr.xrecoff == 0)
 			continue;
 
-		if (!found || XLByteLT(recptr, oldest))
+		if (!found || recptr < oldest)
 			oldest = recptr;
 		found = true;
 	}

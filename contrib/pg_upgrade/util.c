@@ -3,11 +3,11 @@
  *
  *	utility functions
  *
- *	Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *	contrib/pg_upgrade/util.c
  */
 
-#include "postgres.h"
+#include "postgres_fe.h"
 
 #include "pg_upgrade.h"
 
@@ -40,8 +40,8 @@ void
 end_progress_output(void)
 {
 	/*
-	 *	In case nothing printed; pass a space so gcc doesn't complain about
-	 *	empty format string.
+	 * In case nothing printed; pass a space so gcc doesn't complain about
+	 * empty format string.
 	 */
 	prep_status(" ");
 }
@@ -114,13 +114,13 @@ pg_log(eLogType type, char *fmt,...)
 			/* for output to a display, do leading truncation and append \r */
 			if (isatty(fileno(stdout)))
 				/* -2 because we use a 2-space indent */
-				printf("  %s%-*.*s\r", 
-						/* prefix with "..." if we do leading truncation */
-						strlen(message) <= MESSAGE_WIDTH - 2 ? "" : "...",
-						MESSAGE_WIDTH - 2, MESSAGE_WIDTH - 2,
-						/* optional leading truncation */
-						strlen(message) <= MESSAGE_WIDTH - 2 ? message :
-						message + strlen(message) - MESSAGE_WIDTH + 3 + 2);
+				printf("  %s%-*.*s\r",
+				/* prefix with "..." if we do leading truncation */
+					   strlen(message) <= MESSAGE_WIDTH - 2 ? "" : "...",
+					   MESSAGE_WIDTH - 2, MESSAGE_WIDTH - 2,
+				/* optional leading truncation */
+					   strlen(message) <= MESSAGE_WIDTH - 2 ? message :
+					   message + strlen(message) - MESSAGE_WIDTH + 3 + 2);
 			else
 				printf("  %s\n", _(message));
 			break;
@@ -210,55 +210,6 @@ get_user_info(char **user_name)
 	*user_name = pg_strdup(pw->pw_name);
 
 	return user_id;
-}
-
-
-void *
-pg_malloc(size_t size)
-{
-	void	   *p;
-
-	/* Avoid unportable behavior of malloc(0) */
-	if (size == 0)
-		size = 1;
-	p = malloc(size);
-	if (p == NULL)
-		pg_log(PG_FATAL, "%s: out of memory\n", os_info.progname);
-	return p;
-}
-
-void *
-pg_realloc(void *ptr, size_t size)
-{
-	void	   *p;
-
-	/* Avoid unportable behavior of realloc(NULL, 0) */
-	if (ptr == NULL && size == 0)
-		size = 1;
-	p = realloc(ptr, size);
-	if (p == NULL)
-		pg_log(PG_FATAL, "%s: out of memory\n", os_info.progname);
-	return p;
-}
-
-
-void
-pg_free(void *ptr)
-{
-	if (ptr != NULL)
-		free(ptr);
-}
-
-
-char *
-pg_strdup(const char *s)
-{
-	char	   *result = strdup(s);
-
-	if (result == NULL)
-		pg_log(PG_FATAL, "%s: out of memory\n", os_info.progname);
-
-	return result;
 }
 
 

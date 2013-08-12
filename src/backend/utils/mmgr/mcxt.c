@@ -9,7 +9,7 @@
  * context's MemoryContextMethods struct.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -24,6 +24,7 @@
 
 #include "postgres.h"
 
+#include "utils/memdebug.h"
 #include "utils/memutils.h"
 
 
@@ -135,6 +136,8 @@ MemoryContextReset(MemoryContext context)
 	{
 		(*context->methods->reset) (context);
 		context->isReset = true;
+		VALGRIND_DESTROY_MEMPOOL(context);
+		VALGRIND_CREATE_MEMPOOL(context, 0, false);
 	}
 }
 
@@ -184,6 +187,7 @@ MemoryContextDelete(MemoryContext context)
 	MemoryContextSetParent(context, NULL);
 
 	(*context->methods->delete_context) (context);
+	VALGRIND_DESTROY_MEMPOOL(context);
 	pfree(context);
 }
 
@@ -451,14 +455,7 @@ MemoryContextContains(MemoryContext context, void *pointer)
 	header = (StandardChunkHeader *)
 		((char *) pointer - STANDARDCHUNKHEADERSIZE);
 
-	/*
-	 * If the context link doesn't match then we certainly have a non-member
-	 * chunk.  Also check for a reasonable-looking size as extra guard against
-	 * being fooled by bogus pointers.
-	 */
-	if (header->context == context && AllocSizeIsValid(header->size))
-		return true;
-	return false;
+	return header->context == context;
 }
 
 /*--------------------
@@ -555,6 +552,8 @@ MemoryContextCreate(NodeTag tag, Size size,
 		parent->firstchild = node;
 	}
 
+	VALGRIND_CREATE_MEMPOOL(node, 0, false);
+
 	/* Return to type-specific creation routine to finish up */
 	return node;
 }
@@ -569,6 +568,8 @@ MemoryContextCreate(NodeTag tag, Size size,
 void *
 MemoryContextAlloc(MemoryContext context, Size size)
 {
+	void	   *ret;
+
 	AssertArg(MemoryContextIsValid(context));
 
 	if (!AllocSizeIsValid(size))
@@ -577,7 +578,10 @@ MemoryContextAlloc(MemoryContext context, Size size)
 
 	context->isReset = false;
 
-	return (*context->methods->alloc) (context, size);
+	ret = (*context->methods->alloc) (context, size);
+	VALGRIND_MEMPOOL_ALLOC(context, ret, size);
+
+	return ret;
 }
 
 /*
@@ -601,6 +605,7 @@ MemoryContextAllocZero(MemoryContext context, Size size)
 	context->isReset = false;
 
 	ret = (*context->methods->alloc) (context, size);
+	VALGRIND_MEMPOOL_ALLOC(context, ret, size);
 
 	MemSetAligned(ret, 0, size);
 
@@ -628,8 +633,51 @@ MemoryContextAllocZeroAligned(MemoryContext context, Size size)
 	context->isReset = false;
 
 	ret = (*context->methods->alloc) (context, size);
+	VALGRIND_MEMPOOL_ALLOC(context, ret, size);
 
 	MemSetLoop(ret, 0, size);
+
+	return ret;
+}
+
+void *
+palloc(Size size)
+{
+	/* duplicates MemoryContextAlloc to avoid increased overhead */
+	void	   *ret;
+
+	AssertArg(MemoryContextIsValid(CurrentMemoryContext));
+
+	if (!AllocSizeIsValid(size))
+		elog(ERROR, "invalid memory alloc request size %lu",
+			 (unsigned long) size);
+
+	CurrentMemoryContext->isReset = false;
+
+	ret = (*CurrentMemoryContext->methods->alloc) (CurrentMemoryContext, size);
+	VALGRIND_MEMPOOL_ALLOC(CurrentMemoryContext, ret, size);
+
+	return ret;
+}
+
+void *
+palloc0(Size size)
+{
+	/* duplicates MemoryContextAllocZero to avoid increased overhead */
+	void	   *ret;
+
+	AssertArg(MemoryContextIsValid(CurrentMemoryContext));
+
+	if (!AllocSizeIsValid(size))
+		elog(ERROR, "invalid memory alloc request size %lu",
+			 (unsigned long) size);
+
+	CurrentMemoryContext->isReset = false;
+
+	ret = (*CurrentMemoryContext->methods->alloc) (CurrentMemoryContext, size);
+	VALGRIND_MEMPOOL_ALLOC(CurrentMemoryContext, ret, size);
+
+	MemSetAligned(ret, 0, size);
 
 	return ret;
 }
@@ -641,7 +689,7 @@ MemoryContextAllocZeroAligned(MemoryContext context, Size size)
 void
 pfree(void *pointer)
 {
-	StandardChunkHeader *header;
+	MemoryContext context;
 
 	/*
 	 * Try to detect bogus pointers handed to us, poorly though we can.
@@ -654,12 +702,13 @@ pfree(void *pointer)
 	/*
 	 * OK, it's probably safe to look at the chunk header.
 	 */
-	header = (StandardChunkHeader *)
-		((char *) pointer - STANDARDCHUNKHEADERSIZE);
+	context = ((StandardChunkHeader *)
+			   ((char *) pointer - STANDARDCHUNKHEADERSIZE))->context;
 
-	AssertArg(MemoryContextIsValid(header->context));
+	AssertArg(MemoryContextIsValid(context));
 
-	(*header->context->methods->free_p) (header->context, pointer);
+	(*context->methods->free_p) (context, pointer);
+	VALGRIND_MEMPOOL_FREE(context, pointer);
 }
 
 /*
@@ -669,7 +718,12 @@ pfree(void *pointer)
 void *
 repalloc(void *pointer, Size size)
 {
-	StandardChunkHeader *header;
+	MemoryContext context;
+	void	   *ret;
+
+	if (!AllocSizeIsValid(size))
+		elog(ERROR, "invalid memory alloc request size %lu",
+			 (unsigned long) size);
 
 	/*
 	 * Try to detect bogus pointers handed to us, poorly though we can.
@@ -682,20 +736,83 @@ repalloc(void *pointer, Size size)
 	/*
 	 * OK, it's probably safe to look at the chunk header.
 	 */
-	header = (StandardChunkHeader *)
-		((char *) pointer - STANDARDCHUNKHEADERSIZE);
+	context = ((StandardChunkHeader *)
+			   ((char *) pointer - STANDARDCHUNKHEADERSIZE))->context;
 
-	AssertArg(MemoryContextIsValid(header->context));
+	AssertArg(MemoryContextIsValid(context));
 
-	if (!AllocSizeIsValid(size))
+	/* isReset must be false already */
+	Assert(!context->isReset);
+
+	ret = (*context->methods->realloc) (context, pointer, size);
+	VALGRIND_MEMPOOL_CHANGE(context, pointer, ret, size);
+
+	return ret;
+}
+
+/*
+ * MemoryContextAllocHuge
+ *		Allocate (possibly-expansive) space within the specified context.
+ *
+ * See considerations in comment at MaxAllocHugeSize.
+ */
+void *
+MemoryContextAllocHuge(MemoryContext context, Size size)
+{
+	void	   *ret;
+
+	AssertArg(MemoryContextIsValid(context));
+
+	if (!AllocHugeSizeIsValid(size))
 		elog(ERROR, "invalid memory alloc request size %lu",
 			 (unsigned long) size);
 
-	/* isReset must be false already */
-	Assert(!header->context->isReset);
+	context->isReset = false;
 
-	return (*header->context->methods->realloc) (header->context,
-												 pointer, size);
+	ret = (*context->methods->alloc) (context, size);
+	VALGRIND_MEMPOOL_ALLOC(context, ret, size);
+
+	return ret;
+}
+
+/*
+ * repalloc_huge
+ *		Adjust the size of a previously allocated chunk, permitting a large
+ *		value.  The previous allocation need not have been "huge".
+ */
+void *
+repalloc_huge(void *pointer, Size size)
+{
+	MemoryContext context;
+	void	   *ret;
+
+	if (!AllocHugeSizeIsValid(size))
+		elog(ERROR, "invalid memory alloc request size %lu",
+			 (unsigned long) size);
+
+	/*
+	 * Try to detect bogus pointers handed to us, poorly though we can.
+	 * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
+	 * allocated chunk.
+	 */
+	Assert(pointer != NULL);
+	Assert(pointer == (void *) MAXALIGN(pointer));
+
+	/*
+	 * OK, it's probably safe to look at the chunk header.
+	 */
+	context = ((StandardChunkHeader *)
+			   ((char *) pointer - STANDARDCHUNKHEADERSIZE))->context;
+
+	AssertArg(MemoryContextIsValid(context));
+
+	/* isReset must be false already */
+	Assert(!context->isReset);
+
+	ret = (*context->methods->realloc) (context, pointer, size);
+	VALGRIND_MEMPOOL_CHANGE(context, pointer, ret, size);
+
+	return ret;
 }
 
 /*
@@ -715,6 +832,12 @@ MemoryContextStrdup(MemoryContext context, const char *string)
 	return nstr;
 }
 
+char *
+pstrdup(const char *in)
+{
+	return MemoryContextStrdup(CurrentMemoryContext, in);
+}
+
 /*
  * pnstrdup
  *		Like pstrdup(), but append null byte to a
@@ -729,39 +852,3 @@ pnstrdup(const char *in, Size len)
 	out[len] = '\0';
 	return out;
 }
-
-
-#if defined(WIN32) || defined(__CYGWIN__)
-/*
- *	Memory support routines for libpgport on Win32
- *
- *	Win32 can't load a library that PGDLLIMPORTs a variable
- *	if the link object files also PGDLLIMPORT the same variable.
- *	For this reason, libpgport can't reference CurrentMemoryContext
- *	in the palloc macro calls.
- *
- *	To fix this, we create several functions here that allow us to
- *	manage memory without doing the inline in libpgport.
- */
-void *
-pgport_palloc(Size sz)
-{
-	return palloc(sz);
-}
-
-
-char *
-pgport_pstrdup(const char *str)
-{
-	return pstrdup(str);
-}
-
-
-/* Doesn't reference a PGDLLIMPORT variable, but here for completeness. */
-void
-pgport_pfree(void *pointer)
-{
-	pfree(pointer);
-}
-
-#endif

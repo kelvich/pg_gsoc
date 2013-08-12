@@ -3,7 +3,7 @@
  * proc.c
  *	  routines to manage per-process shared memory data structure
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -55,6 +55,7 @@
 /* GUC variables */
 int			DeadlockTimeout = 1000;
 int			StatementTimeout = 0;
+int			LockTimeout = 0;
 bool		log_lock_waits = false;
 
 /* Pointer to this process's PGPROC and PGXACT structs, if any */
@@ -139,10 +140,8 @@ ProcGlobalSemas(void)
  *	  running out when trying to start another backend is a common failure.
  *	  So, now we grab enough semaphores to support the desired max number
  *	  of backends immediately at initialization --- if the sysadmin has set
- *	  MaxConnections or autovacuum_max_workers higher than his kernel will
- *	  support, he'll find out sooner rather than later.  (The number of
- *	  background worker processes registered by loadable modules is also taken
- *	  into consideration.)
+ *	  MaxConnections, max_worker_processes, or autovacuum_max_workers higher
+ *	  than his kernel will support, he'll find out sooner rather than later.
  *
  *	  Another reason for creating semaphores here is that the semaphore
  *	  implementation typically requires us to create semaphores in the
@@ -185,8 +184,8 @@ InitProcGlobal(void)
 	 * five separate consumers: (1) normal backends, (2) autovacuum workers
 	 * and the autovacuum launcher, (3) background workers, (4) auxiliary
 	 * processes, and (5) prepared transactions.  Each PGPROC structure is
-	 * dedicated to exactly one of these purposes, and they do not move between
-	 * groups.
+	 * dedicated to exactly one of these purposes, and they do not move
+	 * between groups.
 	 */
 	procs = (PGPROC *) ShmemAlloc(TotalProcs * sizeof(PGPROC));
 	ProcGlobal->allProcs = procs;
@@ -290,7 +289,7 @@ InitProcess(void)
 		elog(ERROR, "you already exist");
 
 	/*
-	 * Initialize process-local latch support.  This could fail if the kernel
+	 * Initialize process-local latch support.	This could fail if the kernel
 	 * is low on resources, and if so we want to exit cleanly before acquiring
 	 * any shared-memory resources.
 	 */
@@ -475,7 +474,7 @@ InitAuxiliaryProcess(void)
 		elog(ERROR, "you already exist");
 
 	/*
-	 * Initialize process-local latch support.  This could fail if the kernel
+	 * Initialize process-local latch support.	This could fail if the kernel
 	 * is low on resources, and if so we want to exit cleanly before acquiring
 	 * any shared-memory resources.
 	 */
@@ -665,6 +664,7 @@ void
 LockErrorCleanup(void)
 {
 	LWLockId	partitionLock;
+	DisableTimeoutParams timeouts[2];
 
 	AbortStrongLockAcquire();
 
@@ -672,8 +672,19 @@ LockErrorCleanup(void)
 	if (lockAwaited == NULL)
 		return;
 
-	/* Turn off the deadlock timer, if it's still running (see ProcSleep) */
-	disable_timeout(DEADLOCK_TIMEOUT, false);
+	/*
+	 * Turn off the deadlock and lock timeout timers, if they are still
+	 * running (see ProcSleep).  Note we must preserve the LOCK_TIMEOUT
+	 * indicator flag, since this function is executed before
+	 * ProcessInterrupts when responding to SIGINT; else we'd lose the
+	 * knowledge that the SIGINT came from a lock timeout and not an external
+	 * source.
+	 */
+	timeouts[0].id = DEADLOCK_TIMEOUT;
+	timeouts[0].keep_indicator = false;
+	timeouts[1].id = LOCK_TIMEOUT;
+	timeouts[1].keep_indicator = true;
+	disable_timeouts(timeouts, 2);
 
 	/* Unlink myself from the wait queue, if on it (might not be anymore!) */
 	partitionLock = LockHashPartitionLock(lockAwaited->hashcode);
@@ -1072,8 +1083,24 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	 *
 	 * By delaying the check until we've waited for a bit, we can avoid
 	 * running the rather expensive deadlock-check code in most cases.
+	 *
+	 * If LockTimeout is set, also enable the timeout for that.  We can save a
+	 * few cycles by enabling both timeout sources in one call.
 	 */
-	enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
+	if (LockTimeout > 0)
+	{
+		EnableTimeoutParams timeouts[2];
+
+		timeouts[0].id = DEADLOCK_TIMEOUT;
+		timeouts[0].type = TMPARAM_AFTER;
+		timeouts[0].delay_ms = DeadlockTimeout;
+		timeouts[1].id = LOCK_TIMEOUT;
+		timeouts[1].type = TMPARAM_AFTER;
+		timeouts[1].delay_ms = LockTimeout;
+		enable_timeouts(timeouts, 2);
+	}
+	else
+		enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
 
 	/*
 	 * If someone wakes us between LWLockRelease and PGSemaphoreLock,
@@ -1124,25 +1151,25 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 			{
 				int			pid = autovac->pid;
 				StringInfoData locktagbuf;
-				StringInfoData logbuf;		/* errdetail for server log */
+				StringInfoData logbuf;	/* errdetail for server log */
 
 				initStringInfo(&locktagbuf);
 				initStringInfo(&logbuf);
 				DescribeLockTag(&locktagbuf, &lock->tag);
 				appendStringInfo(&logbuf,
-					  _("Process %d waits for %s on %s."),
-						 MyProcPid,
-						 GetLockmodeName(lock->tag.locktag_lockmethodid,
-										 lockmode),
-						 locktagbuf.data);
+								 _("Process %d waits for %s on %s."),
+								 MyProcPid,
+							  GetLockmodeName(lock->tag.locktag_lockmethodid,
+											  lockmode),
+								 locktagbuf.data);
 
 				/* release lock as quickly as possible */
 				LWLockRelease(ProcArrayLock);
 
 				ereport(LOG,
-						(errmsg("sending cancel to blocking autovacuum PID %d",
-							pid),
-						 errdetail_log("%s", logbuf.data)));
+					  (errmsg("sending cancel to blocking autovacuum PID %d",
+							  pid),
+					   errdetail_log("%s", logbuf.data)));
 
 				pfree(logbuf.data);
 				pfree(locktagbuf.data);
@@ -1240,9 +1267,20 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	} while (myWaitStatus == STATUS_WAITING);
 
 	/*
-	 * Disable the timer, if it's still running
+	 * Disable the timers, if they are still running
 	 */
-	disable_timeout(DEADLOCK_TIMEOUT, false);
+	if (LockTimeout > 0)
+	{
+		DisableTimeoutParams timeouts[2];
+
+		timeouts[0].id = DEADLOCK_TIMEOUT;
+		timeouts[0].keep_indicator = false;
+		timeouts[1].id = LOCK_TIMEOUT;
+		timeouts[1].keep_indicator = false;
+		disable_timeouts(timeouts, 2);
+	}
+	else
+		disable_timeout(DEADLOCK_TIMEOUT, false);
 
 	/*
 	 * Re-acquire the lock table's partition lock.  We have to do this to hold

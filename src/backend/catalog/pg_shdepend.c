@@ -3,7 +3,7 @@
  * pg_shdepend.c
  *	  routines to support manipulation of the pg_shdepend relation
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -220,7 +220,7 @@ shdepChangeDep(Relation sdepRel,
 				Int32GetDatum(objsubid));
 
 	scan = systable_beginscan(sdepRel, SharedDependDependerIndexId, true,
-							  SnapshotNow, 4, key);
+							  NULL, 4, key);
 
 	while ((scantup = systable_getnext(scan)) != NULL)
 	{
@@ -554,7 +554,7 @@ checkSharedDependencies(Oid classId, Oid objectId,
 				ObjectIdGetDatum(objectId));
 
 	scan = systable_beginscan(sdepRel, SharedDependReferenceIndexId, true,
-							  SnapshotNow, 2, key);
+							  NULL, 2, key);
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
@@ -729,7 +729,7 @@ copyTemplateDependencies(Oid templateDbId, Oid newDbId)
 				ObjectIdGetDatum(templateDbId));
 
 	scan = systable_beginscan(sdepRel, SharedDependDependerIndexId, true,
-							  SnapshotNow, 1, key);
+							  NULL, 1, key);
 
 	/* Set up to copy the tuples except for inserting newDbId */
 	memset(values, 0, sizeof(values));
@@ -792,7 +792,7 @@ dropDatabaseDependencies(Oid databaseId)
 	/* We leave the other index fields unspecified */
 
 	scan = systable_beginscan(sdepRel, SharedDependDependerIndexId, true,
-							  SnapshotNow, 1, key);
+							  NULL, 1, key);
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
@@ -936,7 +936,7 @@ shdepDropDependency(Relation sdepRel,
 	}
 
 	scan = systable_beginscan(sdepRel, SharedDependDependerIndexId, true,
-							  SnapshotNow, nkeys, key);
+							  NULL, nkeys, key);
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
@@ -1125,7 +1125,7 @@ isSharedObjectPinned(Oid classId, Oid objectId, Relation sdepRel)
 				ObjectIdGetDatum(objectId));
 
 	scan = systable_beginscan(sdepRel, SharedDependReferenceIndexId, true,
-							  SnapshotNow, 2, key);
+							  NULL, 2, key);
 
 	/*
 	 * Since we won't generate additional pg_shdepend entries for pinned
@@ -1212,7 +1212,7 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 					ObjectIdGetDatum(roleid));
 
 		scan = systable_beginscan(sdepRel, SharedDependReferenceIndexId, true,
-								  SnapshotNow, 2, key);
+								  NULL, 2, key);
 
 		while ((tuple = systable_getnext(scan)) != NULL)
 		{
@@ -1240,11 +1240,14 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 											sdepForm->objid);
 					break;
 				case SHARED_DEPENDENCY_OWNER:
-					/* Save it for deletion below */
-					obj.classId = sdepForm->classid;
-					obj.objectId = sdepForm->objid;
-					obj.objectSubId = sdepForm->objsubid;
-					add_exact_object_address(&obj, deleteobjs);
+					/* If a local object, save it for deletion below */
+					if (sdepForm->dbid == MyDatabaseId)
+					{
+						obj.classId = sdepForm->classid;
+						obj.objectId = sdepForm->objid;
+						obj.objectSubId = sdepForm->objsubid;
+						add_exact_object_address(&obj, deleteobjs);
+					}
 					break;
 			}
 		}
@@ -1316,14 +1319,18 @@ shdepReassignOwned(List *roleids, Oid newrole)
 					ObjectIdGetDatum(roleid));
 
 		scan = systable_beginscan(sdepRel, SharedDependReferenceIndexId, true,
-								  SnapshotNow, 2, key);
+								  NULL, 2, key);
 
 		while ((tuple = systable_getnext(scan)) != NULL)
 		{
 			Form_pg_shdepend sdepForm = (Form_pg_shdepend) GETSTRUCT(tuple);
 
-			/* We only operate on objects in the current database */
-			if (sdepForm->dbid != MyDatabaseId)
+			/*
+			 * We only operate on shared objects and objects in the current
+			 * database
+			 */
+			if (sdepForm->dbid != MyDatabaseId &&
+				sdepForm->dbid != InvalidOid)
 				continue;
 
 			/* Unexpected because we checked for pins above */
@@ -1375,7 +1382,7 @@ shdepReassignOwned(List *roleids, Oid newrole)
 					AlterEventTriggerOwner_oid(sdepForm->objid, newrole);
 					break;
 
-				/* Generic alter owner cases */
+					/* Generic alter owner cases */
 				case CollationRelationId:
 				case ConversionRelationId:
 				case OperatorRelationId:
@@ -1385,6 +1392,8 @@ shdepReassignOwned(List *roleids, Oid newrole)
 				case OperatorFamilyRelationId:
 				case OperatorClassRelationId:
 				case ExtensionRelationId:
+				case TableSpaceRelationId:
+				case DatabaseRelationId:
 					{
 						Oid			classId = sdepForm->classid;
 						Relation	catalog;

@@ -3,7 +3,7 @@
  * pl_exec.c		- Executor for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,7 @@
 #include "access/tupconvert.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
-#include "executor/spi_priv.h"
+#include "executor/spi.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -1202,7 +1202,13 @@ exec_stmt_block(PLpgSQL_execstate *estate, PLpgSQL_stmt_block *block)
 			 */
 			SPI_restore_connection();
 
-			/* Must clean up the econtext too */
+			/*
+			 * Must clean up the econtext too.	However, any tuple table made
+			 * in the subxact will have been thrown away by SPI during subxact
+			 * abort, so we don't need to (and mustn't try to) free the
+			 * eval_tuptable.
+			 */
+			estate->eval_tuptable = NULL;
 			exec_eval_cleanup(estate);
 
 			/* Look for a matching exception handler */
@@ -1569,9 +1575,44 @@ exec_stmt_getdiag(PLpgSQL_execstate *estate, PLpgSQL_stmt_getdiag *stmt)
 							unpack_sql_state(estate->cur_error->sqlerrcode));
 				break;
 
+			case PLPGSQL_GETDIAG_COLUMN_NAME:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->column_name);
+				break;
+
+			case PLPGSQL_GETDIAG_CONSTRAINT_NAME:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->constraint_name);
+				break;
+
+			case PLPGSQL_GETDIAG_DATATYPE_NAME:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->datatype_name);
+				break;
+
 			case PLPGSQL_GETDIAG_MESSAGE_TEXT:
 				exec_assign_c_string(estate, var,
 									 estate->cur_error->message);
+				break;
+
+			case PLPGSQL_GETDIAG_TABLE_NAME:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->table_name);
+				break;
+
+			case PLPGSQL_GETDIAG_SCHEMA_NAME:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->schema_name);
+				break;
+
+			case PLPGSQL_GETDIAG_CONTEXT:
+				{
+					char *contextstackstr = GetErrorContextStack();
+
+					exec_assign_c_string(estate, var, contextstackstr);
+
+					pfree(contextstackstr);
+				}
 				break;
 
 			default:
@@ -2799,6 +2840,16 @@ exec_init_tuple_store(PLpgSQL_execstate *estate)
 	estate->rettupdesc = rsi->expectedDesc;
 }
 
+#define SET_RAISE_OPTION_TEXT(opt, name) \
+do { \
+	if (opt) \
+		ereport(ERROR, \
+				(errcode(ERRCODE_SYNTAX_ERROR), \
+				 errmsg("RAISE option already specified: %s", \
+						name))); \
+	opt = pstrdup(extval); \
+} while (0)
+
 /* ----------
  * exec_stmt_raise			Build a message and throw it with elog()
  * ----------
@@ -2811,6 +2862,11 @@ exec_stmt_raise(PLpgSQL_execstate *estate, PLpgSQL_stmt_raise *stmt)
 	char	   *err_message = NULL;
 	char	   *err_detail = NULL;
 	char	   *err_hint = NULL;
+	char	   *err_column = NULL;
+	char	   *err_constraint = NULL;
+	char	   *err_datatype = NULL;
+	char	   *err_table = NULL;
+	char	   *err_schema = NULL;
 	ListCell   *lc;
 
 	/* RAISE with no parameters: re-throw current exception */
@@ -2927,28 +2983,28 @@ exec_stmt_raise(PLpgSQL_execstate *estate, PLpgSQL_stmt_raise *stmt)
 				condname = pstrdup(extval);
 				break;
 			case PLPGSQL_RAISEOPTION_MESSAGE:
-				if (err_message)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("RAISE option already specified: %s",
-									"MESSAGE")));
-				err_message = pstrdup(extval);
+				SET_RAISE_OPTION_TEXT(err_message, "MESSAGE");
 				break;
 			case PLPGSQL_RAISEOPTION_DETAIL:
-				if (err_detail)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("RAISE option already specified: %s",
-									"DETAIL")));
-				err_detail = pstrdup(extval);
+				SET_RAISE_OPTION_TEXT(err_detail, "DETAIL");
 				break;
 			case PLPGSQL_RAISEOPTION_HINT:
-				if (err_hint)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("RAISE option already specified: %s",
-									"HINT")));
-				err_hint = pstrdup(extval);
+				SET_RAISE_OPTION_TEXT(err_hint, "HINT");
+				break;
+			case PLPGSQL_RAISEOPTION_COLUMN:
+				SET_RAISE_OPTION_TEXT(err_column, "COLUMN");
+				break;
+			case PLPGSQL_RAISEOPTION_CONSTRAINT:
+				SET_RAISE_OPTION_TEXT(err_constraint, "CONSTRAINT");
+				break;
+			case PLPGSQL_RAISEOPTION_DATATYPE:
+				SET_RAISE_OPTION_TEXT(err_datatype, "DATATYPE");
+				break;
+			case PLPGSQL_RAISEOPTION_TABLE:
+				SET_RAISE_OPTION_TEXT(err_table, "TABLE");
+				break;
+			case PLPGSQL_RAISEOPTION_SCHEMA:
+				SET_RAISE_OPTION_TEXT(err_schema, "SCHEMA");
 				break;
 			default:
 				elog(ERROR, "unrecognized raise option: %d", opt->opt_type);
@@ -2982,7 +3038,17 @@ exec_stmt_raise(PLpgSQL_execstate *estate, PLpgSQL_stmt_raise *stmt)
 			(err_code ? errcode(err_code) : 0,
 			 errmsg_internal("%s", err_message),
 			 (err_detail != NULL) ? errdetail_internal("%s", err_detail) : 0,
-			 (err_hint != NULL) ? errhint("%s", err_hint) : 0));
+			 (err_hint != NULL) ? errhint("%s", err_hint) : 0,
+			 (err_column != NULL) ?
+			 err_generic_string(PG_DIAG_COLUMN_NAME, err_column) : 0,
+			 (err_constraint != NULL) ?
+			 err_generic_string(PG_DIAG_CONSTRAINT_NAME, err_constraint) : 0,
+			 (err_datatype != NULL) ?
+			 err_generic_string(PG_DIAG_DATATYPE_NAME, err_datatype) : 0,
+			 (err_table != NULL) ?
+			 err_generic_string(PG_DIAG_TABLE_NAME, err_table) : 0,
+			 (err_schema != NULL) ?
+			 err_generic_string(PG_DIAG_SCHEMA_NAME, err_schema) : 0));
 
 	estate->err_text = NULL;	/* un-suppress... */
 
@@ -2994,6 +3060,16 @@ exec_stmt_raise(PLpgSQL_execstate *estate, PLpgSQL_stmt_raise *stmt)
 		pfree(err_detail);
 	if (err_hint != NULL)
 		pfree(err_hint);
+	if (err_column != NULL)
+		pfree(err_column);
+	if (err_constraint != NULL)
+		pfree(err_constraint);
+	if (err_datatype != NULL)
+		pfree(err_datatype);
+	if (err_table != NULL)
+		pfree(err_table);
+	if (err_schema != NULL)
+		pfree(err_schema);
 
 	return PLPGSQL_RC_OK;
 }
@@ -3174,7 +3250,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 
 		exec_prepare_plan(estate, expr, 0);
 		stmt->mod_stmt = false;
-		foreach(l, expr->plan->plancache_list)
+		foreach(l, SPI_plan_get_plan_sources(expr->plan))
 		{
 			CachedPlanSource *plansource = (CachedPlanSource *) lfirst(l);
 			ListCell   *l2;
@@ -4386,7 +4462,6 @@ exec_eval_datum(PLpgSQL_execstate *estate,
 							 errmsg("record \"%s\" has no field \"%s\"",
 									rec->refname, recfield->fieldname)));
 				*typeid = SPI_gettypeid(rec->tupdesc, fno);
-				/* XXX there's no SPI_gettypmod, for some reason */
 				if (fno > 0)
 					*typetypmod = rec->tupdesc->attrs[fno - 1]->atttypmod;
 				else
@@ -4563,12 +4638,10 @@ exec_get_datum_type_info(PLpgSQL_execstate *estate,
 							 errmsg("record \"%s\" has no field \"%s\"",
 									rec->refname, recfield->fieldname)));
 				*typeid = SPI_gettypeid(rec->tupdesc, fno);
-				/* XXX there's no SPI_gettypmod, for some reason */
 				if (fno > 0)
 					*typmod = rec->tupdesc->attrs[fno - 1]->atttypmod;
 				else
 					*typmod = -1;
-				/* XXX there's no SPI_getcollation either */
 				if (fno > 0)
 					*collation = rec->tupdesc->attrs[fno - 1]->attcollation;
 				else	/* no system column types have collation */
@@ -4954,10 +5027,11 @@ loop_exit:
  *
  * It is possible though unlikely for a simple expression to become non-simple
  * (consider for example redefining a trivial view).  We must handle that for
- * correctness; fortunately it's normally inexpensive to do GetCachedPlan on a
- * simple expression.  We do not consider the other direction (non-simple
- * expression becoming simple) because we'll still give correct results if
- * that happens, and it's unlikely to be worth the cycles to check.
+ * correctness; fortunately it's normally inexpensive to call
+ * SPI_plan_get_cached_plan for a simple expression.  We do not consider the
+ * other direction (non-simple expression becoming simple) because we'll still
+ * give correct results if that happens, and it's unlikely to be worth the
+ * cycles to check.
  *
  * Note: if pass-by-reference, the result is in the eval_econtext's
  * temporary memory context.  It will be freed when exec_eval_cleanup
@@ -4973,7 +5047,6 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 {
 	ExprContext *econtext = estate->eval_econtext;
 	LocalTransactionId curlxid = MyProc->lxid;
-	CachedPlanSource *plansource;
 	CachedPlan *cplan;
 	ParamListInfo paramLI;
 	PLpgSQL_expr *save_cur_expr;
@@ -4993,16 +5066,16 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 
 	/*
 	 * Revalidate cached plan, so that we will notice if it became stale. (We
-	 * need to hold a refcount while using the plan, anyway.)  Note that even
-	 * if replanning occurs, the length of plancache_list can't change, since
-	 * it is a property of the raw parsetree generated from the query text.
+	 * need to hold a refcount while using the plan, anyway.)
 	 */
-	Assert(list_length(expr->plan->plancache_list) == 1);
-	plansource = (CachedPlanSource *) linitial(expr->plan->plancache_list);
+	cplan = SPI_plan_get_cached_plan(expr->plan);
 
-	/* Get the generic plan for the query */
-	cplan = GetCachedPlan(plansource, NULL, true);
-	Assert(cplan == plansource->gplan);
+	/*
+	 * We can't get a failure here, because the number of CachedPlanSources in
+	 * the SPI plan can't change from what exec_simple_check_plan saw; it's a
+	 * property of the raw parsetree generated from the query text.
+	 */
+	Assert(cplan != NULL);
 
 	if (cplan->generation != expr->expr_simple_generation)
 	{
@@ -5893,6 +5966,7 @@ exec_simple_check_node(Node *node)
 static void
 exec_simple_check_plan(PLpgSQL_expr *expr)
 {
+	List	   *plansources;
 	CachedPlanSource *plansource;
 	Query	   *query;
 	CachedPlan *cplan;
@@ -5908,9 +5982,10 @@ exec_simple_check_plan(PLpgSQL_expr *expr)
 	/*
 	 * We can only test queries that resulted in exactly one CachedPlanSource
 	 */
-	if (list_length(expr->plan->plancache_list) != 1)
+	plansources = SPI_plan_get_plan_sources(expr->plan);
+	if (list_length(plansources) != 1)
 		return;
-	plansource = (CachedPlanSource *) linitial(expr->plan->plancache_list);
+	plansource = (CachedPlanSource *) linitial(plansources);
 
 	/*
 	 * Do some checking on the analyzed-and-rewritten form of the query. These
@@ -5968,8 +6043,10 @@ exec_simple_check_plan(PLpgSQL_expr *expr)
 	 */
 
 	/* Get the generic plan for the query */
-	cplan = GetCachedPlan(plansource, NULL, true);
-	Assert(cplan == plansource->gplan);
+	cplan = SPI_plan_get_cached_plan(expr->plan);
+
+	/* Can't fail, because we checked for a single CachedPlanSource above */
+	Assert(cplan != NULL);
 
 	/* Share the remaining work with recheck code path */
 	exec_simple_recheck_plan(expr, cplan);
@@ -6146,7 +6223,7 @@ plpgsql_xact_cb(XactEvent event, void *arg)
 	 * expect the regular abort recovery procedures to release everything of
 	 * interest.
 	 */
-	if (event != XACT_EVENT_ABORT)
+	if (event == XACT_EVENT_COMMIT || event == XACT_EVENT_PREPARE)
 	{
 		/* Shouldn't be any econtext stack entries left at commit */
 		Assert(simple_econtext_stack == NULL);
@@ -6155,7 +6232,7 @@ plpgsql_xact_cb(XactEvent event, void *arg)
 			FreeExecutorState(simple_eval_estate);
 		simple_eval_estate = NULL;
 	}
-	else
+	else if (event == XACT_EVENT_ABORT)
 	{
 		simple_econtext_stack = NULL;
 		simple_eval_estate = NULL;
@@ -6174,19 +6251,19 @@ void
 plpgsql_subxact_cb(SubXactEvent event, SubTransactionId mySubid,
 				   SubTransactionId parentSubid, void *arg)
 {
-	if (event == SUBXACT_EVENT_START_SUB)
-		return;
-
-	while (simple_econtext_stack != NULL &&
-		   simple_econtext_stack->xact_subxid == mySubid)
+	if (event == SUBXACT_EVENT_COMMIT_SUB || event == SUBXACT_EVENT_ABORT_SUB)
 	{
-		SimpleEcontextStackEntry *next;
+		while (simple_econtext_stack != NULL &&
+			   simple_econtext_stack->xact_subxid == mySubid)
+		{
+			SimpleEcontextStackEntry *next;
 
-		FreeExprContext(simple_econtext_stack->stack_econtext,
-						(event == SUBXACT_EVENT_COMMIT_SUB));
-		next = simple_econtext_stack->next;
-		pfree(simple_econtext_stack);
-		simple_econtext_stack = next;
+			FreeExprContext(simple_econtext_stack->stack_econtext,
+							(event == SUBXACT_EVENT_COMMIT_SUB));
+			next = simple_econtext_stack->next;
+			pfree(simple_econtext_stack);
+			simple_econtext_stack = next;
+		}
 	}
 }
 

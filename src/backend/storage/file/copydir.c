@@ -3,7 +3,7 @@
  * copydir.c
  *	  copies a directory
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	While "xcopy /e /i /q" works fine for copying directories, on Windows XP
@@ -25,17 +25,6 @@
 #include "storage/copydir.h"
 #include "storage/fd.h"
 #include "miscadmin.h"
-
-/*
- *	On Windows, call non-macro versions of palloc; we can't reference
- *	CurrentMemoryContext in this file because of PGDLLIMPORT conflict.
- */
-#if defined(WIN32) || defined(__CYGWIN__)
-#undef palloc
-#undef pstrdup
-#define palloc(sz)		pgport_palloc(sz)
-#define pstrdup(str)	pgport_pstrdup(str)
-#endif
 
 
 static void fsync_fname(char *fname, bool isdir);

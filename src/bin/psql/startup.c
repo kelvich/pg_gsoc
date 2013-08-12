@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2012, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2013, PostgreSQL Global Development Group
  *
  * src/bin/psql/startup.c
  */
@@ -151,9 +151,9 @@ main(int argc, char *argv[])
 	parse_psql_options(argc, argv, &options);
 
 	/*
-	 * If no action was specified and we're in non-interactive mode, treat
-	 * it as if the user had specified "-f -".  This lets single-transaction
-	 * mode work in this case.
+	 * If no action was specified and we're in non-interactive mode, treat it
+	 * as if the user had specified "-f -".  This lets single-transaction mode
+	 * work in this case.
 	 */
 	if (options.action == ACT_NOTHING && pset.notty)
 	{
@@ -162,12 +162,9 @@ main(int argc, char *argv[])
 	}
 
 	/* Bail out if -1 was specified but will be ignored. */
-	if (options.single_txn && options.action != ACT_FILE)
+	if (options.single_txn && options.action != ACT_FILE && options.action == ACT_NOTHING)
 	{
-		if (options.action == ACT_NOTHING)
-			fprintf(stderr,_("%s: -1 can only be used in non-interactive mode\n"), pset.progname);
-		else
-			fprintf(stderr,_("%s: -1 is incompatible with -c and -l\n"), pset.progname);
+		fprintf(stderr, _("%s: -1 can only be used in non-interactive mode\n"), pset.progname);
 		exit(EXIT_FAILURE);
 	}
 
@@ -260,7 +257,7 @@ main(int argc, char *argv[])
 		if (!options.no_psqlrc)
 			process_psqlrc(argv[0]);
 
-		success = listAllDbs(false);
+		success = listAllDbs(NULL, false);
 		PQfinish(pset.db);
 		exit(success ? EXIT_SUCCESS : EXIT_FAILURE);
 	}
@@ -561,7 +558,7 @@ parse_psql_options(int argc, char *argv[], struct adhoc_opts * options)
 				break;
 			case '?':
 				/* Actual help option given */
-				if (strcmp(argv[optind - 1], "-?") == 0 || strcmp(argv[optind - 1], "--help") == 0)
+				if (strcmp(argv[optind - 1], "--help") == 0 || strcmp(argv[optind - 1], "-?") == 0)
 				{
 					usage();
 					exit(EXIT_SUCCESS);
@@ -610,7 +607,7 @@ process_psqlrc(char *argv0)
 	char		rc_file[MAXPGPATH];
 	char		my_exec_path[MAXPGPATH];
 	char		etc_path[MAXPGPATH];
-	char	   *envrc;
+	char	   *envrc = getenv("PSQLRC");
 
 	find_my_exec(argv0, my_exec_path);
 	get_etc_path(my_exec_path, etc_path);
@@ -618,12 +615,13 @@ process_psqlrc(char *argv0)
 	snprintf(rc_file, MAXPGPATH, "%s/%s", etc_path, SYSPSQLRC);
 	process_psqlrc_file(rc_file);
 
-	envrc = getenv("PSQLRC");
-
 	if (envrc != NULL && strlen(envrc) > 0)
 	{
-		expand_tilde(&envrc);
-		process_psqlrc_file(envrc);
+		/* might need to free() this */
+		char	   *envrc_alloc = pstrdup(envrc);
+
+		expand_tilde(&envrc_alloc);
+		process_psqlrc_file(envrc_alloc);
 	}
 	else if (get_home_path(home))
 	{

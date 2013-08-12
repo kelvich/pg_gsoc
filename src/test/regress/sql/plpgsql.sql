@@ -2941,22 +2941,22 @@ drop table tabwithcols;
 -- Tests for composite-type results
 --
 
-create type footype as (x int, y varchar);
+create type compostype as (x int, y varchar);
 
 -- test: use of variable of composite type in return statement
-create or replace function foo() returns footype as $$
+create or replace function compos() returns compostype as $$
 declare
-  v footype;
+  v compostype;
 begin
   v := (1, 'hello');
   return v;
 end;
 $$ language plpgsql;
 
-select foo();
+select compos();
 
 -- test: use of variable of record type in return statement
-create or replace function foo() returns footype as $$
+create or replace function compos() returns compostype as $$
 declare
   v record;
 begin
@@ -2965,39 +2965,39 @@ begin
 end;
 $$ language plpgsql;
 
-select foo();
+select compos();
 
 -- test: use of row expr in return statement
-create or replace function foo() returns footype as $$
+create or replace function compos() returns compostype as $$
 begin
   return (1, 'hello'::varchar);
 end;
 $$ language plpgsql;
 
-select foo();
+select compos();
 
 -- this does not work currently (no implicit casting)
-create or replace function foo() returns footype as $$
+create or replace function compos() returns compostype as $$
 begin
   return (1, 'hello');
 end;
 $$ language plpgsql;
 
-select foo();
+select compos();
 
 -- ... but this does
-create or replace function foo() returns footype as $$
+create or replace function compos() returns compostype as $$
 begin
-  return (1, 'hello')::footype;
+  return (1, 'hello')::compostype;
 end;
 $$ language plpgsql;
 
-select foo();
+select compos();
 
-drop function foo();
+drop function compos();
 
 -- test: return a row expr as record.
-create or replace function foorec() returns record as $$
+create or replace function composrec() returns record as $$
 declare
   v record;
 begin
@@ -3006,46 +3006,46 @@ begin
 end;
 $$ language plpgsql;
 
-select foorec();
+select composrec();
 
 -- test: return row expr in return statement.
-create or replace function foorec() returns record as $$
+create or replace function composrec() returns record as $$
 begin
   return (1, 'hello');
 end;
 $$ language plpgsql;
 
-select foorec();
+select composrec();
 
-drop function foorec();
+drop function composrec();
 
 -- test: row expr in RETURN NEXT statement.
-create or replace function foo() returns setof footype as $$
+create or replace function compos() returns setof compostype as $$
 begin
   for i in 1..3
   loop
     return next (1, 'hello'::varchar);
   end loop;
-  return next null::footype;
-  return next (2, 'goodbye')::footype;
+  return next null::compostype;
+  return next (2, 'goodbye')::compostype;
 end;
 $$ language plpgsql;
 
-select * from foo();
+select * from compos();
 
-drop function foo();
+drop function compos();
 
 -- test: use invalid expr in return statement.
-create or replace function foo() returns footype as $$
+create or replace function compos() returns compostype as $$
 begin
   return 1 + 1;
 end;
 $$ language plpgsql;
 
-select foo();
+select compos();
 
-drop function foo();
-drop type footype;
+drop function compos();
+drop type compostype;
 
 --
 -- Tests for 8.4's new RAISE features
@@ -3261,6 +3261,38 @@ $$ language plpgsql;
 select raise_test();
 
 drop function raise_test();
+
+-- test passing column_name, constraint_name, datatype_name, table_name
+-- and schema_name error fields
+
+create or replace function stacked_diagnostics_test() returns void as $$
+declare _column_name text;
+        _constraint_name text;
+        _datatype_name text;
+        _table_name text;
+        _schema_name text;
+begin
+  raise exception using
+    column = '>>some column name<<',
+    constraint = '>>some constraint name<<',
+    datatype = '>>some datatype name<<',
+    table = '>>some table name<<',
+    schema = '>>some schema name<<';
+exception when others then
+  get stacked diagnostics
+        _column_name = column_name,
+        _constraint_name = constraint_name,
+        _datatype_name = pg_datatype_name,
+        _table_name = table_name,
+        _schema_name = schema_name;
+  raise notice 'column %, constraint %, type %, table %, schema %',
+    _column_name, _constraint_name, _datatype_name, _table_name, _schema_name;
+end;
+$$ language plpgsql;
+
+select stacked_diagnostics_test();
+
+drop function stacked_diagnostics_test();
 
 -- test CASE statement
 
@@ -3536,6 +3568,19 @@ rollback;
 
 drop function error2(p_name_table text);
 drop function error1(text);
+
+-- Test for consistent reporting of error context
+
+create function fail() returns int language plpgsql as $$
+begin
+  return 1/0;
+end
+$$;
+
+select fail();
+select fail();
+
+drop function fail();
 
 -- Test handling of string literals.
 
@@ -3835,3 +3880,106 @@ select testoa(1,2,1); -- fail at update
 
 drop function arrayassign1();
 drop function testoa(x1 int, x2 int, x3 int);
+
+-- access to call stack
+create function inner_func(int)
+returns int as $$
+declare _context text;
+begin
+  get diagnostics _context = pg_context;
+  raise notice '***%***', _context;
+  -- lets do it again, just for fun..
+  get diagnostics _context = pg_context;
+  raise notice '***%***', _context;
+  raise notice 'lets make sure we didnt break anything';
+  return 2 * $1;
+end;
+$$ language plpgsql;
+
+create or replace function outer_func(int)
+returns int as $$
+declare
+  myresult int;
+begin
+  raise notice 'calling down into inner_func()';
+  myresult := inner_func($1);
+  raise notice 'inner_func() done';
+  return myresult;
+end;
+$$ language plpgsql;
+
+create or replace function outer_outer_func(int)
+returns int as $$
+declare
+  myresult int;
+begin
+  raise notice 'calling down into outer_func()';
+  myresult := outer_func($1);
+  raise notice 'outer_func() done';
+  return myresult;
+end;
+$$ language plpgsql;
+
+select outer_outer_func(10);
+-- repeated call should to work
+select outer_outer_func(20);
+
+drop function outer_outer_func(int);
+drop function outer_func(int);
+drop function inner_func(int);
+
+-- access to call stack from exception
+create function inner_func(int)
+returns int as $$
+declare
+  _context text;
+  sx int := 5;
+begin
+  begin
+    perform sx / 0;
+  exception
+    when division_by_zero then
+      get diagnostics _context = pg_context;
+      raise notice '***%***', _context;
+  end;
+
+  -- lets do it again, just for fun..
+  get diagnostics _context = pg_context;
+  raise notice '***%***', _context;
+  raise notice 'lets make sure we didnt break anything';
+  return 2 * $1;
+end;
+$$ language plpgsql;
+
+create or replace function outer_func(int)
+returns int as $$
+declare
+  myresult int;
+begin
+  raise notice 'calling down into inner_func()';
+  myresult := inner_func($1);
+  raise notice 'inner_func() done';
+  return myresult;
+end;
+$$ language plpgsql;
+
+create or replace function outer_outer_func(int)
+returns int as $$
+declare
+  myresult int;
+begin
+  raise notice 'calling down into outer_func()';
+  myresult := outer_func($1);
+  raise notice 'outer_func() done';
+  return myresult;
+end;
+$$ language plpgsql;
+
+select outer_outer_func(10);
+-- repeated call should to work
+select outer_outer_func(20);
+
+drop function outer_outer_func(int);
+drop function outer_func(int);
+drop function inner_func(int);
+

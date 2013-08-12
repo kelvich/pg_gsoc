@@ -3,7 +3,7 @@
  * reloptions.c
  *	  Core support for relation options (pg_class.reloptions)
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -24,6 +24,7 @@
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/tablespace.h"
+#include "commands/view.h"
 #include "nodes/makefuncs.h"
 #include "utils/array.h"
 #include "utils/attoptcache.h"
@@ -247,6 +248,17 @@ static relopt_string stringRelOpts[] =
 		false,
 		gistValidateBufferingOption,
 		"auto"
+	},
+	{
+		{
+			"check_option",
+			"View has WITH CHECK OPTION defined (local or cascaded).",
+			RELOPT_KIND_VIEW
+		},
+		0,
+		true,
+		validateWithCheckOption,
+		NULL
 	},
 	/* list terminator */
 	{{NULL}}
@@ -791,6 +803,7 @@ extractRelOptions(HeapTuple tuple, TupleDesc tupdesc, Oid amoptions)
 		case RELKIND_RELATION:
 		case RELKIND_TOASTVALUE:
 		case RELKIND_VIEW:
+		case RELKIND_MATVIEW:
 			options = heap_reloptions(classForm->relkind, datum, false);
 			break;
 		case RELKIND_INDEX:
@@ -1151,6 +1164,8 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, autovacuum) +offsetof(AutoVacOpts, analyze_scale_factor)},
 		{"security_barrier", RELOPT_TYPE_BOOL,
 		offsetof(StdRdOptions, security_barrier)},
+		{"check_option", RELOPT_TYPE_STRING,
+		offsetof(StdRdOptions, check_option_offset)},
 	};
 
 	options = parseRelOptions(reloptions, validate, kind, &numoptions);
@@ -1191,6 +1206,7 @@ heap_reloptions(char relkind, Datum reloptions, bool validate)
 			}
 			return (bytea *) rdopts;
 		case RELKIND_RELATION:
+		case RELKIND_MATVIEW:
 			return default_reloptions(reloptions, validate, RELOPT_KIND_HEAP);
 		case RELKIND_VIEW:
 			return default_reloptions(reloptions, validate, RELOPT_KIND_VIEW);

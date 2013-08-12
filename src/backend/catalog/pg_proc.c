@@ -3,7 +3,7 @@
  * pg_proc.c
  *	  routines to support manipulation of the pg_proc relation
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -246,7 +246,7 @@ ProcedureCreate(const char *procedureName,
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 				 errmsg("cannot determine result data type"),
-				 errdetail("A function returning ANYRANGE must have at least one ANYRANGE argument.")));
+				 errdetail("A function returning \"anyrange\" must have at least one \"anyrange\" argument.")));
 
 	if ((returnType == INTERNALOID || internalOutParam) && !internalInParam)
 		ereport(ERROR,
@@ -406,7 +406,7 @@ ProcedureCreate(const char *procedureName,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 					 errmsg("cannot change return type of existing function"),
 					 errhint("Use DROP FUNCTION %s first.",
-                             format_procedure(HeapTupleGetOid(oldtup)))));
+							 format_procedure(HeapTupleGetOid(oldtup)))));
 
 		/*
 		 * If it returns RECORD, check for possible change of record type
@@ -430,7 +430,7 @@ ProcedureCreate(const char *procedureName,
 					errmsg("cannot change return type of existing function"),
 				errdetail("Row type defined by OUT parameters is different."),
 						 errhint("Use DROP FUNCTION %s first.",
-                                 format_procedure(HeapTupleGetOid(oldtup)))));
+								 format_procedure(HeapTupleGetOid(oldtup)))));
 		}
 
 		/*
@@ -473,7 +473,7 @@ ProcedureCreate(const char *procedureName,
 					   errmsg("cannot change name of input parameter \"%s\"",
 							  old_arg_names[j]),
 							 errhint("Use DROP FUNCTION %s first.",
-                                     format_procedure(HeapTupleGetOid(oldtup)))));
+								format_procedure(HeapTupleGetOid(oldtup)))));
 			}
 		}
 
@@ -497,7 +497,7 @@ ProcedureCreate(const char *procedureName,
 						(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 						 errmsg("cannot remove parameter defaults from existing function"),
 						 errhint("Use DROP FUNCTION %s first.",
-                                 format_procedure(HeapTupleGetOid(oldtup)))));
+								 format_procedure(HeapTupleGetOid(oldtup)))));
 
 			proargdefaults = SysCacheGetAttr(PROCNAMEARGSNSP, oldtup,
 											 Anum_pg_proc_proargdefaults,
@@ -524,7 +524,7 @@ ProcedureCreate(const char *procedureName,
 							(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 							 errmsg("cannot change data type of existing parameter default value"),
 							 errhint("Use DROP FUNCTION %s first.",
-                                     format_procedure(HeapTupleGetOid(oldtup)))));
+								format_procedure(HeapTupleGetOid(oldtup)))));
 				newlc = lnext(newlc);
 			}
 		}
@@ -661,8 +661,7 @@ ProcedureCreate(const char *procedureName,
 	heap_freetuple(tup);
 
 	/* Post creation hook for new function */
-	InvokeObjectAccessHook(OAT_POST_CREATE,
-						   ProcedureRelationId, retval, 0, NULL);
+	InvokeObjectPostCreateHook(ProcedureRelationId, retval, 0);
 
 	heap_close(rel, RowExclusiveLock);
 

@@ -43,7 +43,7 @@
  * before switching to the other state or activating a different read pointer.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -104,7 +104,8 @@ struct Tuplestorestate
 	bool		backward;		/* store extra length words in file? */
 	bool		interXact;		/* keep open through transactions? */
 	bool		truncated;		/* tuplestore_trim has removed tuples? */
-	long		availMem;		/* remaining memory available, in bytes */
+	int64		availMem;		/* remaining memory available, in bytes */
+	int64		allowedMem;		/* total memory allowed, in bytes */
 	BufFile    *myfile;			/* underlying file, or NULL if none */
 	MemoryContext context;		/* memory context for holding tuples */
 	ResourceOwner resowner;		/* resowner for holding temp files */
@@ -156,6 +157,7 @@ struct Tuplestorestate
 	int			memtupdeleted;	/* the first N slots are currently unused */
 	int			memtupcount;	/* number of tuples currently present */
 	int			memtupsize;		/* allocated length of memtuples array */
+	bool		growmemtuples;	/* memtuples' growth still underway? */
 
 	/*
 	 * These variables are used to keep track of the current positions.
@@ -254,7 +256,8 @@ tuplestore_begin_common(int eflags, bool interXact, int maxKBytes)
 	state->eflags = eflags;
 	state->interXact = interXact;
 	state->truncated = false;
-	state->availMem = maxKBytes * 1024L;
+	state->allowedMem = maxKBytes * 1024L;
+	state->availMem = state->allowedMem;
 	state->myfile = NULL;
 	state->context = CurrentMemoryContext;
 	state->resowner = CurrentResourceOwner;
@@ -262,6 +265,7 @@ tuplestore_begin_common(int eflags, bool interXact, int maxKBytes)
 	state->memtupdeleted = 0;
 	state->memtupcount = 0;
 	state->memtupsize = 1024;	/* initial guess */
+	state->growmemtuples = true;
 	state->memtuples = (void **) palloc(state->memtupsize * sizeof(void *));
 
 	USEMEM(state, GetMemoryChunkSpace(state->memtuples));
@@ -527,6 +531,135 @@ tuplestore_ateof(Tuplestorestate *state)
 }
 
 /*
+ * Grow the memtuples[] array, if possible within our memory constraint.  We
+ * must not exceed INT_MAX tuples in memory or the caller-provided memory
+ * limit.  Return TRUE if we were able to enlarge the array, FALSE if not.
+ *
+ * Normally, at each increment we double the size of the array.  When doing
+ * that would exceed a limit, we attempt one last, smaller increase (and then
+ * clear the growmemtuples flag so we don't try any more).  That allows us to
+ * use memory as fully as permitted; sticking to the pure doubling rule could
+ * result in almost half going unused.  Because availMem moves around with
+ * tuple addition/removal, we need some rule to prevent making repeated small
+ * increases in memtupsize, which would just be useless thrashing.  The
+ * growmemtuples flag accomplishes that and also prevents useless
+ * recalculations in this function.
+ */
+static bool
+grow_memtuples(Tuplestorestate *state)
+{
+	int			newmemtupsize;
+	int			memtupsize = state->memtupsize;
+	int64		memNowUsed = state->allowedMem - state->availMem;
+
+	/* Forget it if we've already maxed out memtuples, per comment above */
+	if (!state->growmemtuples)
+		return false;
+
+	/* Select new value of memtupsize */
+	if (memNowUsed <= state->availMem)
+	{
+		/*
+		 * We've used no more than half of allowedMem; double our usage,
+		 * clamping at INT_MAX tuples.
+		 */
+		if (memtupsize < INT_MAX / 2)
+			newmemtupsize = memtupsize * 2;
+		else
+		{
+			newmemtupsize = INT_MAX;
+			state->growmemtuples = false;
+		}
+	}
+	else
+	{
+		/*
+		 * This will be the last increment of memtupsize.  Abandon doubling
+		 * strategy and instead increase as much as we safely can.
+		 *
+		 * To stay within allowedMem, we can't increase memtupsize by more
+		 * than availMem / sizeof(void *) elements. In practice, we want to
+		 * increase it by considerably less, because we need to leave some
+		 * space for the tuples to which the new array slots will refer.  We
+		 * assume the new tuples will be about the same size as the tuples
+		 * we've already seen, and thus we can extrapolate from the space
+		 * consumption so far to estimate an appropriate new size for the
+		 * memtuples array.  The optimal value might be higher or lower than
+		 * this estimate, but it's hard to know that in advance.  We again
+		 * clamp at INT_MAX tuples.
+		 *
+		 * This calculation is safe against enlarging the array so much that
+		 * LACKMEM becomes true, because the memory currently used includes
+		 * the present array; thus, there would be enough allowedMem for the
+		 * new array elements even if no other memory were currently used.
+		 *
+		 * We do the arithmetic in float8, because otherwise the product of
+		 * memtupsize and allowedMem could overflow.  Any inaccuracy in the
+		 * result should be insignificant; but even if we computed a
+		 * completely insane result, the checks below will prevent anything
+		 * really bad from happening.
+		 */
+		double		grow_ratio;
+
+		grow_ratio = (double) state->allowedMem / (double) memNowUsed;
+		if (memtupsize * grow_ratio < INT_MAX)
+			newmemtupsize = (int) (memtupsize * grow_ratio);
+		else
+			newmemtupsize = INT_MAX;
+
+		/* We won't make any further enlargement attempts */
+		state->growmemtuples = false;
+	}
+
+	/* Must enlarge array by at least one element, else report failure */
+	if (newmemtupsize <= memtupsize)
+		goto noalloc;
+
+	/*
+	 * On a 32-bit machine, allowedMem could exceed MaxAllocHugeSize.  Clamp
+	 * to ensure our request won't be rejected.  Note that we can easily
+	 * exhaust address space before facing this outcome.  (This is presently
+	 * impossible due to guc.c's MAX_KILOBYTES limitation on work_mem, but
+	 * don't rely on that at this distance.)
+	 */
+	if ((Size) newmemtupsize >= MaxAllocHugeSize / sizeof(void *))
+	{
+		newmemtupsize = (int) (MaxAllocHugeSize / sizeof(void *));
+		state->growmemtuples = false;	/* can't grow any more */
+	}
+
+	/*
+	 * We need to be sure that we do not cause LACKMEM to become true, else
+	 * the space management algorithm will go nuts.  The code above should
+	 * never generate a dangerous request, but to be safe, check explicitly
+	 * that the array growth fits within availMem.	(We could still cause
+	 * LACKMEM if the memory chunk overhead associated with the memtuples
+	 * array were to increase.	That shouldn't happen with any sane value of
+	 * allowedMem, because at any array size large enough to risk LACKMEM,
+	 * palloc would be treating both old and new arrays as separate chunks.
+	 * But we'll check LACKMEM explicitly below just in case.)
+	 */
+	if (state->availMem < (int64) ((newmemtupsize - memtupsize) * sizeof(void *)))
+		goto noalloc;
+
+	/* OK, do it */
+	FREEMEM(state, GetMemoryChunkSpace(state->memtuples));
+	state->memtupsize = newmemtupsize;
+	state->memtuples = (void **)
+		repalloc_huge(state->memtuples,
+					  state->memtupsize * sizeof(void *));
+	USEMEM(state, GetMemoryChunkSpace(state->memtuples));
+	if (LACKMEM(state))
+		elog(ERROR, "unexpected out-of-memory situation during sort");
+	return true;
+
+noalloc:
+	/* If for any reason we didn't realloc, shut off future attempts */
+	state->growmemtuples = false;
+	return false;
+}
+
+/*
  * Accept one tuple and append it to the tuplestore.
  *
  * Note that the input tuple is always copied; the caller need not save it.
@@ -631,20 +764,8 @@ tuplestore_puttuple_common(Tuplestorestate *state, void *tuple)
 			 */
 			if (state->memtupcount >= state->memtupsize - 1)
 			{
-				/*
-				 * See grow_memtuples() in tuplesort.c for the rationale
-				 * behind these two tests.
-				 */
-				if (state->availMem > (long) (state->memtupsize * sizeof(void *)) &&
-					(Size) (state->memtupsize * 2) < MaxAllocSize / sizeof(void *))
-				{
-					FREEMEM(state, GetMemoryChunkSpace(state->memtuples));
-					state->memtupsize *= 2;
-					state->memtuples = (void **)
-						repalloc(state->memtuples,
-								 state->memtupsize * sizeof(void *));
-					USEMEM(state, GetMemoryChunkSpace(state->memtuples));
-				}
+				(void) grow_memtuples(state);
+				Assert(state->memtupcount < state->memtupsize);
 			}
 
 			/* Stash the tuple in the in-memory array */

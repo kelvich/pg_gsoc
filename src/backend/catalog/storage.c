@@ -3,7 +3,7 @@
  * storage.c
  *	  code to create and destroy physical storage for relations
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -312,6 +312,10 @@ smgrDoPendingDeletes(bool isCommit)
 	PendingRelDelete *pending;
 	PendingRelDelete *prev;
 	PendingRelDelete *next;
+	int			nrels = 0,
+				i = 0,
+				maxrels = 8;
+	SMgrRelation *srels = palloc(maxrels * sizeof(SMgrRelation));
 
 	prev = NULL;
 	for (pending = pendingDeletes; pending != NULL; pending = next)
@@ -335,14 +339,32 @@ smgrDoPendingDeletes(bool isCommit)
 				SMgrRelation srel;
 
 				srel = smgropen(pending->relnode, pending->backend);
-				smgrdounlink(srel, false);
-				smgrclose(srel);
+
+				/* extend the array if needed (double the size) */
+				if (maxrels <= nrels)
+				{
+					maxrels *= 2;
+					srels = repalloc(srels, sizeof(SMgrRelation) * maxrels);
+				}
+
+				srels[nrels++] = srel;
 			}
 			/* must explicitly free the list entry */
 			pfree(pending);
 			/* prev does not change */
 		}
 	}
+
+	if (nrels > 0)
+	{
+		smgrdounlinkall(srels, nrels, false);
+
+		for (i = 0; i < nrels; i++)
+			smgrclose(srels[i]);
+	}
+
+	pfree(srels);
+
 }
 
 /*
@@ -483,13 +505,12 @@ smgr_redo(XLogRecPtr lsn, XLogRecord *record)
 		smgrcreate(reln, MAIN_FORKNUM, true);
 
 		/*
-		 * Before we perform the truncation, update minimum recovery point
-		 * to cover this WAL record. Once the relation is truncated, there's
-		 * no going back. The buffer manager enforces the WAL-first rule
-		 * for normal updates to relation files, so that the minimum recovery
-		 * point is always updated before the corresponding change in the
-		 * data file is flushed to disk. We have to do the same manually
-		 * here.
+		 * Before we perform the truncation, update minimum recovery point to
+		 * cover this WAL record. Once the relation is truncated, there's no
+		 * going back. The buffer manager enforces the WAL-first rule for
+		 * normal updates to relation files, so that the minimum recovery
+		 * point is always updated before the corresponding change in the data
+		 * file is flushed to disk. We have to do the same manually here.
 		 *
 		 * Doing this before the truncation means that if the truncation fails
 		 * for some reason, you cannot start up the system even after restart,

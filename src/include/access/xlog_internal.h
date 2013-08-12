@@ -11,7 +11,7 @@
  * Note: This file must be includable in both frontend and backend contexts,
  * to allow stand-alone tools like pg_receivexlog to deal with WAL files.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/xlog_internal.h
@@ -55,7 +55,7 @@ typedef struct BkpBlock
 /*
  * Each page of XLOG file has a header like this:
  */
-#define XLOG_PAGE_MAGIC 0xD075	/* can be used as WAL version indicator */
+#define XLOG_PAGE_MAGIC 0xD076	/* can be used as WAL version indicator */
 
 typedef struct XLogPageHeaderData
 {
@@ -120,17 +120,6 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 		(dest) = (segno) * XLOG_SEG_SIZE + (offset)
 
 /*
- * Macros for manipulating XLOG pointers
- */
-
-/* Align a record pointer to next page */
-#define NextLogPage(recptr) \
-	do {	\
-		if ((recptr) % XLOG_BLCKSZ != 0)	\
-			XLByteAdvance(recptr, (XLOG_BLCKSZ - (recptr) % XLOG_BLCKSZ)); \
-	} while (0)
-
-/*
  * Compute ID and segment from an XLogRecPtr.
  *
  * For XLByteToSeg, do the computation at face value.  For XLByteToPrevSeg,
@@ -138,10 +127,10 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
  * for deciding which segment to write given a pointer to a record end,
  * for example.
  */
-#define XLByteToSeg(xlrp, logSegNo)	\
+#define XLByteToSeg(xlrp, logSegNo) \
 	logSegNo = (xlrp) / XLogSegSize
 
-#define XLByteToPrevSeg(xlrp, logSegNo)	\
+#define XLByteToPrevSeg(xlrp, logSegNo) \
 	logSegNo = ((xlrp) - 1) / XLogSegSize
 
 /*
@@ -150,10 +139,10 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
  * For XLByteInSeg, do the computation at face value.  For XLByteInPrevSeg,
  * a boundary byte is taken to be in the previous segment.
  */
-#define XLByteInSeg(xlrp, logSegNo)	\
+#define XLByteInSeg(xlrp, logSegNo) \
 	(((xlrp) / XLogSegSize) == (logSegNo))
 
-#define XLByteInPrevSeg(xlrp, logSegNo)	\
+#define XLByteInPrevSeg(xlrp, logSegNo) \
 	((((xlrp) - 1) / XLogSegSize) == (logSegNo))
 
 /* Check if an XLogRecPtr value is in a plausible range */
@@ -181,8 +170,8 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 	do {												\
 		uint32 log;										\
 		uint32 seg;										\
-		sscanf(fname, "%08X%08X%08X", tli, &log, &seg);	\
-		*logSegNo = (uint64) log * XLogSegmentsPerXLogId + seg;	\
+		sscanf(fname, "%08X%08X%08X", tli, &log, &seg); \
+		*logSegNo = (uint64) log * XLogSegmentsPerXLogId + seg; \
 	} while (0)
 
 #define XLogFilePath(path, tli, logSegNo)	\
@@ -216,6 +205,7 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 typedef struct xl_parameter_change
 {
 	int			MaxConnections;
+	int			max_worker_processes;
 	int			max_prepared_xacts;
 	int			max_locks_per_xact;
 	int			wal_level;
@@ -228,6 +218,13 @@ typedef struct xl_restore_point
 	char		rp_name[MAXFNAMELEN];
 } xl_restore_point;
 
+/* End of recovery mark, when we don't do an END_OF_RECOVERY checkpoint */
+typedef struct xl_end_of_recovery
+{
+	TimestampTz end_time;
+	TimeLineID	ThisTimeLineID; /* new TLI */
+	TimeLineID	PrevTimeLineID; /* previous TLI we forked off from */
+} xl_end_of_recovery;
 
 /*
  * XLogRecord is defined in xlog.h, but we avoid #including that to keep
@@ -238,7 +235,10 @@ struct XLogRecord;
 /*
  * Method table for resource managers.
  *
- * RmgrTable[] is indexed by RmgrId values (see rmgr.h).
+ * This struct must be kept in sync with the PG_RMGR definition in
+ * rmgr.c.
+ *
+ * RmgrTable[] is indexed by RmgrId values (see rmgrlist.h).
  */
 typedef struct RmgrData
 {
@@ -261,9 +261,10 @@ extern XLogRecPtr RequestXLogSwitch(void);
 extern void GetOldestRestartPoint(XLogRecPtr *oldrecptr, TimeLineID *oldtli);
 
 /*
- * Exported for the functions in timeline.c and xlogarchive.c.  Only valid
+ * Exported for the functions in timeline.c and xlogarchive.c.	Only valid
  * in the startup process.
  */
+extern bool ArchiveRecoveryRequested;
 extern bool InArchiveRecovery;
 extern bool StandbyMode;
 extern char *recoveryRestoreCommand;
@@ -276,8 +277,10 @@ extern bool RestoreArchivedFile(char *path, const char *xlogfname,
 					bool cleanupEnabled);
 extern void ExecuteRecoveryCommand(char *command, char *commandName,
 					   bool failOnerror);
+extern void KeepFileRestoredFromArchive(char *path, char *xlogfname);
 extern void XLogArchiveNotify(const char *xlog);
 extern void XLogArchiveNotifySeg(XLogSegNo segno);
+extern void XLogArchiveForceDone(const char *xlog);
 extern bool XLogArchiveCheckDone(const char *xlog);
 extern bool XLogArchiveIsBusy(const char *xlog);
 extern void XLogArchiveCleanup(const char *xlog);

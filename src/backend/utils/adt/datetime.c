@@ -3,7 +3,7 @@
  * datetime.c
  *	  Support functions for date/time types.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -945,6 +945,7 @@ DecodeDateTime(char **field, int *ftype, int nf,
 				break;
 
 			case DTK_TIME:
+
 				/*
 				 * This might be an ISO time following a "t" field.
 				 */
@@ -1558,8 +1559,8 @@ overflow:
  * Returns 0 if successful, DTERR code if bogus input detected.
  *
  * Note that support for time zone is here for
- * SQL92 TIME WITH TIME ZONE, but it reveals
- * bogosity with SQL92 date/time standards, since
+ * SQL TIME WITH TIME ZONE, but it reveals
+ * bogosity with SQL date/time standards, since
  * we must infer a time zone from current time.
  * - thomas 2000-03-10
  * Allow specifying date to get a better time zone,
@@ -2180,7 +2181,7 @@ DecodeDate(char *str, int fmask, int *tmask, bool *is2digits,
 			str++;
 
 		if (*str == '\0')
-			return DTERR_BAD_FORMAT;		/* end of string after separator */
+			return DTERR_BAD_FORMAT;	/* end of string after separator */
 
 		field[nf] = str;
 		if (isdigit((unsigned char) *str))
@@ -2894,7 +2895,7 @@ DecodeInterval(char **field, int *ftype, int nf, int range,
 				Assert(*field[i] == '-' || *field[i] == '+');
 
 				/*
-				 * Check for signed hh:mm or hh:mm:ss.  If so, process exactly
+				 * Check for signed hh:mm or hh:mm:ss.	If so, process exactly
 				 * like DTK_TIME case above, plus handling the sign.
 				 */
 				if (strchr(field[i] + 1, ':') != NULL &&

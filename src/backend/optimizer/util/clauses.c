@@ -3,7 +3,7 @@
  * clauses.c
  *	  routines to manipulate qualification clauses
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -110,7 +110,7 @@ static Node *simplify_boolean_equality(Oid opno, List *args);
 static Expr *simplify_function(Oid funcid,
 				  Oid result_type, int32 result_typmod,
 				  Oid result_collid, Oid input_collid, List **args_p,
-				  bool process_args, bool allow_non_const,
+				  bool funcvariadic, bool process_args, bool allow_non_const,
 				  eval_const_expressions_context *context);
 static List *expand_function_arguments(List *args, Oid result_type,
 						  HeapTuple func_tuple);
@@ -121,10 +121,12 @@ static void recheck_cast_function_args(List *args, Oid result_type,
 						   HeapTuple func_tuple);
 static Expr *evaluate_function(Oid funcid, Oid result_type, int32 result_typmod,
 				  Oid result_collid, Oid input_collid, List *args,
+				  bool funcvariadic,
 				  HeapTuple func_tuple,
 				  eval_const_expressions_context *context);
 static Expr *inline_function(Oid funcid, Oid result_type, Oid result_collid,
 				Oid input_collid, List *args,
+				bool funcvariadic,
 				HeapTuple func_tuple,
 				eval_const_expressions_context *context);
 static Node *substitute_actual_parameters(Node *expr, int nargs, List *args,
@@ -493,6 +495,15 @@ count_agg_clauses_walker(Node *node, count_agg_clauses_context *context)
 		costs->transCost.startup += argcosts.startup;
 		costs->transCost.per_tuple += argcosts.per_tuple;
 
+		/*
+		 * Add the filter's cost to per-input-row costs.  XXX We should reduce
+		 * input expression costs according to filter selectivity.
+		 */
+		cost_qual_eval_node(&argcosts, (Node *) aggref->aggfilter,
+							context->root);
+		costs->transCost.startup += argcosts.startup;
+		costs->transCost.per_tuple += argcosts.per_tuple;
+
 		/* extract argument types (ignoring any ORDER BY expressions) */
 		inputTypes = (Oid *) palloc(sizeof(Oid) * list_length(aggref->args));
 		numArguments = 0;
@@ -563,7 +574,8 @@ count_agg_clauses_walker(Node *node, count_agg_clauses_context *context)
 
 		/*
 		 * Complain if the aggregate's arguments contain any aggregates;
-		 * nested agg functions are semantically nonsensical.
+		 * nested agg functions are semantically nonsensical.  Aggregates in
+		 * the FILTER clause are detected in transformAggregateCall().
 		 */
 		if (contain_agg_clause((Node *) aggref->args))
 			ereport(ERROR,
@@ -637,7 +649,8 @@ find_window_functions_walker(Node *node, WindowFuncLists *lists)
 
 		/*
 		 * Complain if the window function's arguments contain window
-		 * functions
+		 * functions.  Window functions in the FILTER clause are detected in
+		 * transformAggregateCall().
 		 */
 		if (contain_window_function((Node *) wfunc->args))
 			ereport(ERROR,
@@ -2058,62 +2071,6 @@ CommuteRowCompareExpr(RowCompareExpr *clause)
 }
 
 /*
- * strip_implicit_coercions: remove implicit coercions at top level of tree
- *
- * Note: there isn't any useful thing we can do with a RowExpr here, so
- * just return it unchanged, even if it's marked as an implicit coercion.
- */
-Node *
-strip_implicit_coercions(Node *node)
-{
-	if (node == NULL)
-		return NULL;
-	if (IsA(node, FuncExpr))
-	{
-		FuncExpr   *f = (FuncExpr *) node;
-
-		if (f->funcformat == COERCE_IMPLICIT_CAST)
-			return strip_implicit_coercions(linitial(f->args));
-	}
-	else if (IsA(node, RelabelType))
-	{
-		RelabelType *r = (RelabelType *) node;
-
-		if (r->relabelformat == COERCE_IMPLICIT_CAST)
-			return strip_implicit_coercions((Node *) r->arg);
-	}
-	else if (IsA(node, CoerceViaIO))
-	{
-		CoerceViaIO *c = (CoerceViaIO *) node;
-
-		if (c->coerceformat == COERCE_IMPLICIT_CAST)
-			return strip_implicit_coercions((Node *) c->arg);
-	}
-	else if (IsA(node, ArrayCoerceExpr))
-	{
-		ArrayCoerceExpr *c = (ArrayCoerceExpr *) node;
-
-		if (c->coerceformat == COERCE_IMPLICIT_CAST)
-			return strip_implicit_coercions((Node *) c->arg);
-	}
-	else if (IsA(node, ConvertRowtypeExpr))
-	{
-		ConvertRowtypeExpr *c = (ConvertRowtypeExpr *) node;
-
-		if (c->convertformat == COERCE_IMPLICIT_CAST)
-			return strip_implicit_coercions((Node *) c->arg);
-	}
-	else if (IsA(node, CoerceToDomain))
-	{
-		CoerceToDomain *c = (CoerceToDomain *) node;
-
-		if (c->coercionformat == COERCE_IMPLICIT_CAST)
-			return strip_implicit_coercions((Node *) c->arg);
-	}
-	return node;
-}
-
-/*
  * Helper for eval_const_expressions: check that datatype of an attribute
  * is still what it was when the expression was parsed.  This is needed to
  * guard against improper simplification after ALTER COLUMN TYPE.  (XXX we
@@ -2314,6 +2271,7 @@ eval_const_expressions_mutator(Node *node,
 										   expr->funccollid,
 										   expr->inputcollid,
 										   &args,
+										   expr->funcvariadic,
 										   true,
 										   true,
 										   context);
@@ -2330,6 +2288,7 @@ eval_const_expressions_mutator(Node *node,
 				newexpr->funcid = expr->funcid;
 				newexpr->funcresulttype = expr->funcresulttype;
 				newexpr->funcretset = expr->funcretset;
+				newexpr->funcvariadic = expr->funcvariadic;
 				newexpr->funcformat = expr->funcformat;
 				newexpr->funccollid = expr->funccollid;
 				newexpr->inputcollid = expr->inputcollid;
@@ -2359,6 +2318,7 @@ eval_const_expressions_mutator(Node *node,
 										   expr->opcollid,
 										   expr->inputcollid,
 										   &args,
+										   false,
 										   true,
 										   true,
 										   context);
@@ -2462,6 +2422,7 @@ eval_const_expressions_mutator(Node *node,
 											   expr->opcollid,
 											   expr->inputcollid,
 											   &args,
+											   false,
 											   false,
 											   false,
 											   context);
@@ -2665,6 +2626,7 @@ eval_const_expressions_mutator(Node *node,
 										   InvalidOid,
 										   InvalidOid,
 										   &args,
+										   false,
 										   true,
 										   true,
 										   context);
@@ -2696,6 +2658,7 @@ eval_const_expressions_mutator(Node *node,
 											   expr->resultcollid,
 											   InvalidOid,
 											   &args,
+											   false,
 											   false,
 											   true,
 											   context);
@@ -3565,7 +3528,7 @@ simplify_boolean_equality(Oid opno, List *args)
 static Expr *
 simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
 				  Oid result_collid, Oid input_collid, List **args_p,
-				  bool process_args, bool allow_non_const,
+				  bool funcvariadic, bool process_args, bool allow_non_const,
 				  eval_const_expressions_context *context)
 {
 	List	   *args = *args_p;
@@ -3609,7 +3572,8 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
 	/* Now attempt simplification of the function call proper. */
 
 	newexpr = evaluate_function(funcid, result_type, result_typmod,
-								result_collid, input_collid, args,
+								result_collid, input_collid,
+								args, funcvariadic,
 								func_tuple, context);
 
 	if (!newexpr && allow_non_const && OidIsValid(func_form->protransform))
@@ -3625,6 +3589,7 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
 		fexpr.funcid = funcid;
 		fexpr.funcresulttype = result_type;
 		fexpr.funcretset = func_form->proretset;
+		fexpr.funcvariadic = funcvariadic;
 		fexpr.funcformat = COERCE_EXPLICIT_CALL;
 		fexpr.funccollid = result_collid;
 		fexpr.inputcollid = input_collid;
@@ -3638,7 +3603,7 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
 
 	if (!newexpr && allow_non_const)
 		newexpr = inline_function(funcid, result_type, result_collid,
-								  input_collid, args,
+								  input_collid, args, funcvariadic,
 								  func_tuple, context);
 
 	ReleaseSysCache(func_tuple);
@@ -3878,6 +3843,7 @@ recheck_cast_function_args(List *args, Oid result_type, HeapTuple func_tuple)
 static Expr *
 evaluate_function(Oid funcid, Oid result_type, int32 result_typmod,
 				  Oid result_collid, Oid input_collid, List *args,
+				  bool funcvariadic,
 				  HeapTuple func_tuple,
 				  eval_const_expressions_context *context)
 {
@@ -3959,7 +3925,8 @@ evaluate_function(Oid funcid, Oid result_type, int32 result_typmod,
 	newexpr->funcid = funcid;
 	newexpr->funcresulttype = result_type;
 	newexpr->funcretset = false;
-	newexpr->funcformat = COERCE_EXPLICIT_CALL;	/* doesn't matter */
+	newexpr->funcvariadic = funcvariadic;
+	newexpr->funcformat = COERCE_EXPLICIT_CALL; /* doesn't matter */
 	newexpr->funccollid = result_collid;		/* doesn't matter */
 	newexpr->inputcollid = input_collid;
 	newexpr->args = args;
@@ -4001,6 +3968,7 @@ evaluate_function(Oid funcid, Oid result_type, int32 result_typmod,
 static Expr *
 inline_function(Oid funcid, Oid result_type, Oid result_collid,
 				Oid input_collid, List *args,
+				bool funcvariadic,
 				HeapTuple func_tuple,
 				eval_const_expressions_context *context)
 {
@@ -4089,6 +4057,7 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	fexpr->funcid = funcid;
 	fexpr->funcresulttype = result_type;
 	fexpr->funcretset = false;
+	fexpr->funcvariadic = funcvariadic;
 	fexpr->funcformat = COERCE_EXPLICIT_CALL;	/* doesn't matter */
 	fexpr->funccollid = result_collid;	/* doesn't matter */
 	fexpr->inputcollid = input_collid;
@@ -4483,10 +4452,15 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 */
 	check_stack_depth();
 
+	/* Fail if the caller wanted ORDINALITY - we don't implement that here. */
+	if (rte->funcordinality)
+		return NULL;
+
 	/* Fail if FROM item isn't a simple FuncExpr */
 	fexpr = (FuncExpr *) rte->funcexpr;
 	if (fexpr == NULL || !IsA(fexpr, FuncExpr))
 		return NULL;
+
 	func_oid = fexpr->funcid;
 
 	/*

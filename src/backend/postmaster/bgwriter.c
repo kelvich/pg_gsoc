@@ -24,7 +24,7 @@
  * should be killed by SIGQUIT and then a recovery cycle started.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -223,12 +223,6 @@ BackgroundWriterMain(void)
 	 * Unblock signals (they were blocked when the postmaster forked us)
 	 */
 	PG_SETMASK(&UnBlockSig);
-
-	/*
-	 * Use the recovery target timeline ID during recovery
-	 */
-	if (RecoveryInProgress())
-		ThisTimeLineID = GetRecoveryTargetTLI();
 
 	/*
 	 * Reset hibernation state after any error.

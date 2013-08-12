@@ -3,7 +3,7 @@
  * fe-connect.c
  *	  functions related to setting up a connection to the backend
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -162,7 +162,7 @@ typedef struct _internalPQconninfoOption
 	 * ---
 	 */
 	off_t		connofs;		/* Offset into PGconn struct, -1 if not there */
-}	internalPQconninfoOption;
+} internalPQconninfoOption;
 
 static const internalPQconninfoOption PQconninfoOptions[] = {
 	/*
@@ -389,7 +389,7 @@ pgthreadlock_t pg_g_threadlock = default_threadlock;
  *		pqDropConnection
  *
  * Close any physical connection to the server, and reset associated
- * state inside the connection object.  We don't release state that
+ * state inside the connection object.	We don't release state that
  * would be needed to reconnect, though.
  */
 void
@@ -1376,8 +1376,8 @@ connectDBStart(PGconn *conn)
 		{
 			appendPQExpBuffer(&conn->errorMessage,
 							  libpq_gettext("Unix-domain socket path \"%s\" is too long (maximum %d bytes)\n"),
-											portstr,
-											(int) (UNIXSOCK_PATH_BUFLEN - 1));
+							  portstr,
+							  (int) (UNIXSOCK_PATH_BUFLEN - 1));
 			conn->options_valid = false;
 			goto connect_errReturn;
 		}
@@ -1666,7 +1666,7 @@ keep_going:						/* We will come back to here until there is
 					if (!pg_set_noblock(conn->sock))
 					{
 						appendPQExpBuffer(&conn->errorMessage,
-										  libpq_gettext("could not set socket to non-blocking mode: %s\n"),
+										  libpq_gettext("could not set socket to nonblocking mode: %s\n"),
 							SOCK_STRERROR(SOCK_ERRNO, sebuf, sizeof(sebuf)));
 						pqDropConnection(conn);
 						conn->addr_cur = addr_cur->ai_next;
@@ -1780,9 +1780,10 @@ keep_going:						/* We will come back to here until there is
 								addr_cur->ai_addrlen) < 0)
 					{
 						if (SOCK_ERRNO == EINPROGRESS ||
+#ifdef WIN32
 							SOCK_ERRNO == EWOULDBLOCK ||
-							SOCK_ERRNO == EINTR ||
-							SOCK_ERRNO == 0)
+#endif
+							SOCK_ERRNO == EINTR)
 						{
 							/*
 							 * This is fine - we're in non-blocking mode, and

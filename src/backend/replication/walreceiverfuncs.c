@@ -6,7 +6,7 @@
  * with the walreceiver process. Functions implementing walreceiver itself
  * are in walreceiver.c.
  *
- * Portions Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -260,12 +260,13 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo)
 	walrcv->startTime = now;
 
 	/*
-	 * If this is the first startup of walreceiver, we initialize receivedUpto
-	 * and latestChunkStart to receiveStart.
+	 * If this is the first startup of walreceiver (on this timeline),
+	 * initialize receivedUpto and latestChunkStart to the starting point.
 	 */
-	if (walrcv->receiveStart == 0)
+	if (walrcv->receiveStart == 0 || walrcv->receivedTLI != tli)
 	{
 		walrcv->receivedUpto = recptr;
+		walrcv->receivedTLI = tli;
 		walrcv->latestChunkStart = recptr;
 	}
 	walrcv->receiveStart = recptr;
@@ -324,9 +325,9 @@ GetReplicationApplyDelay(void)
 	receivePtr = walrcv->receivedUpto;
 	SpinLockRelease(&walrcv->mutex);
 
-	replayPtr = GetXLogReplayRecPtr();
+	replayPtr = GetXLogReplayRecPtr(NULL);
 
-	if (XLByteEQ(receivePtr, replayPtr))
+	if (receivePtr == replayPtr)
 		return 0;
 
 	TimestampDifference(GetCurrentChunkReplayStartTime(),

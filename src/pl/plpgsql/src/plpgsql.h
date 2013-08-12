@@ -3,7 +3,7 @@
  * plpgsql.h		- Definitions for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -124,11 +124,17 @@ enum
 {
 	PLPGSQL_GETDIAG_ROW_COUNT,
 	PLPGSQL_GETDIAG_RESULT_OID,
+	PLPGSQL_GETDIAG_CONTEXT,
 	PLPGSQL_GETDIAG_ERROR_CONTEXT,
 	PLPGSQL_GETDIAG_ERROR_DETAIL,
 	PLPGSQL_GETDIAG_ERROR_HINT,
 	PLPGSQL_GETDIAG_RETURNED_SQLSTATE,
-	PLPGSQL_GETDIAG_MESSAGE_TEXT
+	PLPGSQL_GETDIAG_COLUMN_NAME,
+	PLPGSQL_GETDIAG_CONSTRAINT_NAME,
+	PLPGSQL_GETDIAG_DATATYPE_NAME,
+	PLPGSQL_GETDIAG_MESSAGE_TEXT,
+	PLPGSQL_GETDIAG_TABLE_NAME,
+	PLPGSQL_GETDIAG_SCHEMA_NAME
 };
 
 /* --------
@@ -140,7 +146,12 @@ enum
 	PLPGSQL_RAISEOPTION_ERRCODE,
 	PLPGSQL_RAISEOPTION_MESSAGE,
 	PLPGSQL_RAISEOPTION_DETAIL,
-	PLPGSQL_RAISEOPTION_HINT
+	PLPGSQL_RAISEOPTION_HINT,
+	PLPGSQL_RAISEOPTION_COLUMN,
+	PLPGSQL_RAISEOPTION_CONSTRAINT,
+	PLPGSQL_RAISEOPTION_DATATYPE,
+	PLPGSQL_RAISEOPTION_TABLE,
+	PLPGSQL_RAISEOPTION_SCHEMA
 };
 
 /* --------
@@ -932,7 +943,7 @@ extern Datum plpgsql_exec_function(PLpgSQL_function *func,
 extern HeapTuple plpgsql_exec_trigger(PLpgSQL_function *func,
 					 TriggerData *trigdata);
 extern void plpgsql_exec_event_trigger(PLpgSQL_function *func,
-					 EventTriggerData *trigdata);
+						   EventTriggerData *trigdata);
 extern void plpgsql_xact_cb(XactEvent event, void *arg);
 extern void plpgsql_subxact_cb(SubXactEvent event, SubTransactionId mySubid,
 				   SubTransactionId parentSubid, void *arg);

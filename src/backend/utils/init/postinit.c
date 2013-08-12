@@ -3,7 +3,7 @@
  * postinit.c
  *	  postgres initialization utilities
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -67,6 +67,7 @@ static void CheckMyDatabase(const char *name, bool am_superuser);
 static void InitCommunication(void);
 static void ShutdownPostgres(int code, Datum arg);
 static void StatementTimeoutHandler(void);
+static void LockTimeoutHandler(void);
 static bool ThereIsAtLeastOneRole(void);
 static void process_startup_options(Port *port, bool am_superuser);
 static void process_settings(Oid databaseid, Oid roleid);
@@ -110,7 +111,7 @@ GetDatabaseTuple(const char *dbname)
 	relation = heap_open(DatabaseRelationId, AccessShareLock);
 	scan = systable_beginscan(relation, DatabaseNameIndexId,
 							  criticalSharedRelcachesBuilt,
-							  SnapshotNow,
+							  NULL,
 							  1, key);
 
 	tuple = systable_getnext(scan);
@@ -153,7 +154,7 @@ GetDatabaseTupleByOid(Oid dboid)
 	relation = heap_open(DatabaseRelationId, AccessShareLock);
 	scan = systable_beginscan(relation, DatabaseOidIndexId,
 							  criticalSharedRelcachesBuilt,
-							  SnapshotNow,
+							  NULL,
 							  1, key);
 
 	tuple = systable_getnext(scan);
@@ -202,9 +203,9 @@ PerformAuthentication(Port *port)
 	{
 		/*
 		 * It is ok to continue if we fail to load the IDENT file, although it
-		 * means that you cannot log in using any of the authentication methods
-		 * that need a user name mapping. load_ident() already logged the
-		 * details of error to the log.
+		 * means that you cannot log in using any of the authentication
+		 * methods that need a user name mapping. load_ident() already logged
+		 * the details of error to the log.
 		 */
 	}
 #endif
@@ -356,11 +357,6 @@ CheckMyDatabase(const char *name, bool am_superuser)
 	SetConfigOption("lc_collate", collate, PGC_INTERNAL, PGC_S_OVERRIDE);
 	SetConfigOption("lc_ctype", ctype, PGC_INTERNAL, PGC_S_OVERRIDE);
 
-	/* Use the right encoding in translated messages */
-#ifdef ENABLE_NLS
-	pg_bind_textdomain_codeset(textdomain(NULL));
-#endif
-
 	ReleaseSysCache(tup);
 }
 
@@ -421,6 +417,31 @@ pg_split_opts(char **argv, int *argcp, char *optstr)
 	}
 }
 
+/*
+ * Initialize MaxBackends value from config options.
+ *
+ * This must be called after modules have had the chance to register background
+ * workers in shared_preload_libraries, and before shared memory size is
+ * determined.
+ *
+ * Note that in EXEC_BACKEND environment, the value is passed down from
+ * postmaster to subprocesses via BackendParameters in SubPostmasterMain; only
+ * postmaster itself and processes not under postmaster control should call
+ * this.
+ */
+void
+InitializeMaxBackends(void)
+{
+	Assert(MaxBackends == 0);
+
+	/* the extra unit accounts for the autovacuum launcher */
+	MaxBackends = MaxConnections + autovacuum_max_workers + 1 +
+		+ max_worker_processes;
+
+	/* internal error because the values were all checked previously */
+	if (MaxBackends > MAX_BACKENDS)
+		elog(ERROR, "too many backends configured");
+}
 
 /*
  * Early initialization of a backend (either standalone or under postmaster).
@@ -510,6 +531,7 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 	{
 		RegisterTimeout(DEADLOCK_TIMEOUT, CheckDeadLock);
 		RegisterTimeout(STATEMENT_TIMEOUT, StatementTimeoutHandler);
+		RegisterTimeout(LOCK_TIMEOUT, LockTimeoutHandler);
 	}
 
 	/*
@@ -699,7 +721,7 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 	{
 		Assert(!bootstrap);
 
-		if (!superuser() && !is_authenticated_user_replication_role())
+		if (!superuser() && !has_rolreplication(GetUserId()))
 			ereport(FATAL,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 					 errmsg("must be superuser or replication role to start walsender")));
@@ -942,7 +964,7 @@ process_startup_options(Port *port, bool am_superuser)
 
 		Assert(ac < maxac);
 
-		(void) process_postgres_switches(ac, av, gucctx);
+		(void) process_postgres_switches(ac, av, gucctx, NULL);
 	}
 
 	/*
@@ -975,17 +997,23 @@ static void
 process_settings(Oid databaseid, Oid roleid)
 {
 	Relation	relsetting;
+	Snapshot	snapshot;
 
 	if (!IsUnderPostmaster)
 		return;
 
 	relsetting = heap_open(DbRoleSettingRelationId, AccessShareLock);
 
-	/* Later settings are ignored if set earlier. */
-	ApplySetting(databaseid, roleid, relsetting, PGC_S_DATABASE_USER);
-	ApplySetting(InvalidOid, roleid, relsetting, PGC_S_USER);
-	ApplySetting(databaseid, InvalidOid, relsetting, PGC_S_DATABASE);
+	/* read all the settings under the same snapsot for efficiency */
+	snapshot = RegisterSnapshot(GetCatalogSnapshot(DbRoleSettingRelationId));
 
+	/* Later settings are ignored if set earlier. */
+	ApplySetting(snapshot, databaseid, roleid, relsetting, PGC_S_DATABASE_USER);
+	ApplySetting(snapshot, InvalidOid, roleid, relsetting, PGC_S_USER);
+	ApplySetting(snapshot, databaseid, InvalidOid, relsetting, PGC_S_DATABASE);
+	ApplySetting(snapshot, InvalidOid, InvalidOid, relsetting, PGC_S_GLOBAL);
+
+	UnregisterSnapshot(snapshot);
 	heap_close(relsetting, AccessShareLock);
 }
 
@@ -1026,6 +1054,22 @@ StatementTimeoutHandler(void)
 	kill(MyProcPid, SIGINT);
 }
 
+/*
+ * LOCK_TIMEOUT handler: trigger a query-cancel interrupt.
+ *
+ * This is identical to StatementTimeoutHandler, but since it's so short,
+ * we might as well keep the two functions separate for clarity.
+ */
+static void
+LockTimeoutHandler(void)
+{
+#ifdef HAVE_SETSID
+	/* try to signal whole process group */
+	kill(-MyProcPid, SIGINT);
+#endif
+	kill(MyProcPid, SIGINT);
+}
+
 
 /*
  * Returns true if at least one role is defined in this database cluster.
@@ -1039,7 +1083,7 @@ ThereIsAtLeastOneRole(void)
 
 	pg_authid_rel = heap_open(AuthIdRelationId, AccessShareLock);
 
-	scan = heap_beginscan(pg_authid_rel, SnapshotNow, 0, NULL);
+	scan = heap_beginscan_catalog(pg_authid_rel, 0, NULL);
 	result = (heap_getnext(scan, ForwardScanDirection) != NULL);
 
 	heap_endscan(scan);

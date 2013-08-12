@@ -3,7 +3,7 @@
  * catcache.c
  *	  System catalog cache for tuples matching a key.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,6 +21,7 @@
 #include "access/sysattr.h"
 #include "access/tuptoaster.h"
 #include "access/valid.h"
+#include "access/xact.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
@@ -291,7 +292,7 @@ CatalogCacheComputeTupleHashValue(CatCache *cache, HeapTuple tuple)
 static void
 CatCachePrintStats(int code, Datum arg)
 {
-	slist_iter  iter;
+	slist_iter	iter;
 	long		cc_searches = 0;
 	long		cc_hits = 0;
 	long		cc_neg_hits = 0;
@@ -444,7 +445,7 @@ CatCacheRemoveCList(CatCache *cache, CatCList *cl)
 void
 CatalogCacheIdInvalidate(int cacheId, uint32 hashValue)
 {
-	slist_iter cache_iter;
+	slist_iter	cache_iter;
 
 	CACHE1_elog(DEBUG2, "CatalogCacheIdInvalidate: called");
 
@@ -554,12 +555,12 @@ AtEOXact_CatCache(bool isCommit)
 #ifdef USE_ASSERT_CHECKING
 	if (assert_enabled)
 	{
-		slist_iter  cache_iter;
+		slist_iter	cache_iter;
 
 		slist_foreach(cache_iter, &CacheHdr->ch_caches)
 		{
 			CatCache   *ccp = slist_container(CatCache, cc_next, cache_iter.cur);
-			dlist_iter  iter;
+			dlist_iter	iter;
 			int			i;
 
 			/* Check CatCLists */
@@ -649,7 +650,7 @@ ResetCatalogCache(CatCache *cache)
 void
 ResetCatalogCaches(void)
 {
-	slist_iter    iter;
+	slist_iter	iter;
 
 	CACHE1_elog(DEBUG2, "ResetCatalogCaches called");
 
@@ -679,7 +680,7 @@ ResetCatalogCaches(void)
 void
 CatalogCacheFlushCatalog(Oid catId)
 {
-	slist_iter  iter;
+	slist_iter	iter;
 
 	CACHE2_elog(DEBUG2, "CatalogCacheFlushCatalog called for %u", catId);
 
@@ -1067,6 +1068,9 @@ SearchCatCache(CatCache *cache,
 	SysScanDesc scandesc;
 	HeapTuple	ntp;
 
+	/* Make sure we're in a xact, even if this ends up being a cache hit */
+	Assert(IsTransactionState());
+
 	/*
 	 * one-time startup overhead for each cache
 	 */
@@ -1182,7 +1186,7 @@ SearchCatCache(CatCache *cache,
 	scandesc = systable_beginscan(relation,
 								  cache->cc_indexoid,
 								  IndexScanOK(cache, cur_skey),
-								  SnapshotNow,
+								  NULL,
 								  cache->cc_nkeys,
 								  cur_skey);
 
@@ -1343,7 +1347,7 @@ SearchCatCacheList(CatCache *cache,
 {
 	ScanKeyData cur_skey[CATCACHE_MAXKEYS];
 	uint32		lHashValue;
-	dlist_iter  iter;
+	dlist_iter	iter;
 	CatCList   *cl;
 	CatCTup    *ct;
 	List	   *volatile ctlist;
@@ -1461,7 +1465,7 @@ SearchCatCacheList(CatCache *cache,
 		scandesc = systable_beginscan(relation,
 									  cache->cc_indexoid,
 									  IndexScanOK(cache, cur_skey),
-									  SnapshotNow,
+									  NULL,
 									  nkeys,
 									  cur_skey);
 
@@ -1789,7 +1793,7 @@ PrepareToInvalidateCacheTuple(Relation relation,
 							  HeapTuple newtuple,
 							  void (*function) (int, uint32, Oid))
 {
-	slist_iter  iter;
+	slist_iter	iter;
 	Oid			reloid;
 
 	CACHE1_elog(DEBUG2, "PrepareToInvalidateCacheTuple: called");

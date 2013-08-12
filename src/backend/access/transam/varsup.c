@@ -3,7 +3,7 @@
  * varsup.c
  *	  postgres OID & XID variables support routines
  *
- * Copyright (c) 2000-2012, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/access/transam/varsup.c
@@ -73,8 +73,10 @@ GetNewTransactionId(bool isSubXact)
 	 * If we're past xidVacLimit, start trying to force autovacuum cycles.
 	 * If we're past xidWarnLimit, start issuing warnings.
 	 * If we're past xidStopLimit, refuse to execute transactions, unless
-	 * we are running in a standalone backend (which gives an escape hatch
+	 * we are running in single-user mode (which gives an escape hatch
 	 * to the DBA who somehow got past the earlier defenses).
+	 *
+	 * Note that this coding also appears in GetNewMultiXactId.
 	 *----------
 	 */
 	if (TransactionIdFollowsOrEquals(xid, ShmemVariableCache->xidVacLimit))
@@ -112,14 +114,14 @@ GetNewTransactionId(bool isSubXact)
 						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 						 errmsg("database is not accepting commands to avoid wraparound data loss in database \"%s\"",
 								oldest_datname),
-						 errhint("Stop the postmaster and use a standalone backend to vacuum that database.\n"
+						 errhint("Stop the postmaster and vacuum that database in single-user mode.\n"
 								 "You might also need to commit or roll back old prepared transactions.")));
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 						 errmsg("database is not accepting commands to avoid wraparound data loss in database with OID %u",
 								oldest_datoid),
-						 errhint("Stop the postmaster and use a standalone backend to vacuum that database.\n"
+						 errhint("Stop the postmaster and vacuum that database in single-user mode.\n"
 								 "You might also need to commit or roll back old prepared transactions.")));
 		}
 		else if (TransactionIdFollowsOrEquals(xid, xidWarnLimit))
@@ -449,18 +451,18 @@ GetNewObjectId(void)
 	 * iterations in GetNewOid.)  Note we are relying on unsigned comparison.
 	 *
 	 * During initdb, we start the OID generator at FirstBootstrapObjectId, so
-	 * we only enforce wrapping to that point when in bootstrap or standalone
-	 * mode.  The first time through this routine after normal postmaster
-	 * start, the counter will be forced up to FirstNormalObjectId. This
-	 * mechanism leaves the OIDs between FirstBootstrapObjectId and
-	 * FirstNormalObjectId available for automatic assignment during initdb,
-	 * while ensuring they will never conflict with user-assigned OIDs.
+	 * we only wrap if before that point when in bootstrap or standalone mode.
+	 * The first time through this routine after normal postmaster start, the
+	 * counter will be forced up to FirstNormalObjectId.  This mechanism
+	 * leaves the OIDs between FirstBootstrapObjectId and FirstNormalObjectId
+	 * available for automatic assignment during initdb, while ensuring they
+	 * will never conflict with user-assigned OIDs.
 	 */
 	if (ShmemVariableCache->nextOid < ((Oid) FirstNormalObjectId))
 	{
 		if (IsPostmasterEnvironment)
 		{
-			/* wraparound in normal environment */
+			/* wraparound, or first post-initdb assignment, in normal mode */
 			ShmemVariableCache->nextOid = FirstNormalObjectId;
 			ShmemVariableCache->oidCount = 0;
 		}
@@ -469,8 +471,8 @@ GetNewObjectId(void)
 			/* we may be bootstrapping, so don't enforce the full range */
 			if (ShmemVariableCache->nextOid < ((Oid) FirstBootstrapObjectId))
 			{
-				/* wraparound in standalone environment? */
-				ShmemVariableCache->nextOid = FirstBootstrapObjectId;
+				/* wraparound in standalone mode (unlikely but possible) */
+				ShmemVariableCache->nextOid = FirstNormalObjectId;
 				ShmemVariableCache->oidCount = 0;
 			}
 		}

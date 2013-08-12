@@ -84,7 +84,7 @@
  *	when using the SysV semaphore code.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	  src/include/storage/s_lock.h
@@ -334,6 +334,29 @@ tas(volatile slock_t *lock)
 
 #endif	 /* HAVE_GCC_INT_ATOMICS */
 #endif	 /* __arm__ */
+
+
+/*
+ * On ARM64, we use __sync_lock_test_and_set(int *, int) if available.
+ */
+#if defined(__aarch64__) || defined(__aarch64)
+#ifdef HAVE_GCC_INT_ATOMICS
+#define HAS_TEST_AND_SET
+
+#define TAS(lock) tas(lock)
+
+typedef int slock_t;
+
+static __inline__ int
+tas(volatile slock_t *lock)
+{
+	return __sync_lock_test_and_set(lock, 1);
+}
+
+#define S_UNLOCK(lock) __sync_lock_release(lock)
+
+#endif	 /* HAVE_GCC_INT_ATOMICS */
+#endif	 /* __aarch64__ */
 
 
 /* S/390 and S/390x Linux (32- and 64-bit zSeries) */

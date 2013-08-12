@@ -26,7 +26,7 @@
  * restart needs to be forced.)
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -107,7 +107,7 @@
  */
 typedef struct
 {
-	RelFileNode	rnode;
+	RelFileNode rnode;
 	ForkNumber	forknum;
 	BlockNumber segno;			/* see md.c for special values */
 	/* might add a real request-type field later; not needed yet */
@@ -345,12 +345,6 @@ CheckpointerMain(void)
 	 * Unblock signals (they were blocked when the postmaster forked us)
 	 */
 	PG_SETMASK(&UnBlockSig);
-
-	/*
-	 * Use the recovery target timeline ID during recovery
-	 */
-	if (RecoveryInProgress())
-		ThisTimeLineID = GetRecoveryTargetTLI();
 
 	/*
 	 * Ensure all shared memory values are set correctly for the config. Doing
@@ -936,8 +930,8 @@ CheckpointerShmemInit(void)
 	{
 		/*
 		 * First time through, so initialize.  Note that we zero the whole
-		 * requests array; this is so that CompactCheckpointerRequestQueue
-		 * can assume that any pad bytes in the request structs are zeroes.
+		 * requests array; this is so that CompactCheckpointerRequestQueue can
+		 * assume that any pad bytes in the request structs are zeroes.
 		 */
 		MemSet(CheckpointerShmem, 0, size);
 		SpinLockInit(&CheckpointerShmem->ckpt_lck);

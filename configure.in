@@ -17,13 +17,13 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [9.3devel], [pgsql-bugs@postgresql.org])
+AC_INIT([PostgreSQL], [9.4devel], [pgsql-bugs@postgresql.org])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.63], [], [m4_fatal([Autoconf version 2.63 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
 recommended.  You can remove the check from 'configure.in' but it is then
 your responsibility whether the result works or not.])])
-AC_COPYRIGHT([Copyright (c) 1996-2012, PostgreSQL Global Development Group])
+AC_COPYRIGHT([Copyright (c) 1996-2013, PostgreSQL Global Development Group])
 AC_CONFIG_SRCDIR([src/backend/access/common/heaptuple.c])
 AC_CONFIG_AUX_DIR(config)
 AC_PREFIX_DEFAULT(/usr/local/pgsql)
@@ -400,6 +400,11 @@ else
   fi
 fi
 
+# set CFLAGS_VECTOR from the environment, if available
+if test "$ac_env_CFLAGS_VECTOR_set" = set; then
+  CFLAGS_VECTOR=$ac_env_CFLAGS_VECTOR_value
+fi
+
 # Some versions of GCC support some additional useful warning flags.
 # Check whether they are supported, and add them to CFLAGS if so.
 # ICC pretends to be GCC but it's lying; it doesn't support these flags,
@@ -419,6 +424,9 @@ if test "$GCC" = yes -a "$ICC" = no; then
   PGAC_PROG_CC_CFLAGS_OPT([-fwrapv])
   # Disable FP optimizations that cause various errors on gcc 4.5+ or maybe 4.6+
   PGAC_PROG_CC_CFLAGS_OPT([-fexcess-precision=standard])
+  # Optimization flags for specific files that benefit from vectorization
+  PGAC_PROG_CC_VAR_OPT(CFLAGS_VECTOR, [-funroll-loops])
+  PGAC_PROG_CC_VAR_OPT(CFLAGS_VECTOR, [-ftree-vectorize])
 elif test "$ICC" = yes; then
   # Intel's compiler has a bug/misoptimization in checking for
   # division by NAN (NaN == 0), -mp1 fixes it, so add it to the CFLAGS.
@@ -433,6 +441,8 @@ elif test "$PORTNAME" = "hpux"; then
   # Fix that by using +Olibmerrno if the compiler recognizes it.
   PGAC_PROG_CC_CFLAGS_OPT([+Olibmerrno])
 fi
+
+AC_SUBST(CFLAGS_VECTOR, $CFLAGS_VECTOR)
 
 # supply -g if --enable-debug
 if test "$enable_debug" = yes && test "$ac_cv_prog_cc_g" = yes; then
@@ -952,8 +962,8 @@ fi
 
 # for contrib/sepgsql
 if test "$with_selinux" = yes; then
-  AC_CHECK_LIB(selinux, selinux_status_open, [],
-               [AC_MSG_ERROR([library 'libselinux', version 2.0.99 or newer, is required for SELinux support])])
+  AC_CHECK_LIB(selinux, security_compute_create_name, [],
+               [AC_MSG_ERROR([library 'libselinux', version 2.1.10 or newer, is required for SELinux support])])
 fi
 
 # for contrib/uuid-ossp
@@ -972,9 +982,9 @@ AC_SUBST(OSSP_UUID_LIBS)
 ##
 
 dnl sys/socket.h is required by AC_FUNC_ACCEPT_ARGTYPES
-AC_CHECK_HEADERS([crypt.h dld.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h poll.h pwd.h sys/ioctl.h sys/ipc.h sys/poll.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/socket.h sys/sockio.h sys/tas.h sys/time.h sys/ucred.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h])
+AC_CHECK_HEADERS([crypt.h dld.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h poll.h pwd.h sys/ioctl.h sys/ipc.h sys/poll.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/socket.h sys/sockio.h sys/tas.h sys/time.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h])
 
-# On BSD, cpp test for net/if.h will fail unless sys/socket.h
+# On BSD, test for net/if.h will fail unless sys/socket.h
 # is included first.
 AC_CHECK_HEADERS(net/if.h, [], [],
 [AC_INCLUDES_DEFAULT
@@ -983,7 +993,14 @@ AC_CHECK_HEADERS(net/if.h, [], [],
 #endif
 ])
 
-# At least on IRIX, cpp test for netinet/tcp.h will fail unless
+# On OpenBSD, test for sys/ucred.h will fail unless sys/param.h
+# is included first.
+AC_CHECK_HEADERS(sys/ucred.h, [], [],
+[AC_INCLUDES_DEFAULT
+#include <sys/param.h>
+])
+
+# At least on IRIX, test for netinet/tcp.h will fail unless
 # netinet/in.h is included first.
 AC_CHECK_HEADERS(netinet/in.h)
 AC_CHECK_HEADERS(netinet/tcp.h, [], [],
@@ -1106,6 +1123,9 @@ AC_C_VOLATILE
 PGAC_C_FUNCNAME_SUPPORT
 PGAC_C_STATIC_ASSERT
 PGAC_C_TYPES_COMPATIBLE
+PGAC_C_BUILTIN_CONSTANT_P
+PGAC_C_BUILTIN_UNREACHABLE
+PGAC_C_VA_ARGS
 PGAC_STRUCT_TIMEZONE
 PGAC_UNION_SEMUN
 PGAC_STRUCT_SOCKADDR_UN
@@ -1120,6 +1140,7 @@ PGAC_TYPE_LOCALE_T
 
 AC_CHECK_TYPES([struct cmsgcred], [], [],
 [#include <sys/socket.h>
+#include <sys/param.h>
 #ifdef HAVE_SYS_UCRED_H
 #include <sys/ucred.h>
 #endif])
@@ -1209,7 +1230,7 @@ PGAC_FUNC_GETTIMEOFDAY_1ARG
 LIBS_including_readline="$LIBS"
 LIBS=`echo "$LIBS" | sed -e 's/-ledit//g' -e 's/-lreadline//g'`
 
-AC_CHECK_FUNCS([cbrt dlopen fdatasync getifaddrs getpeerucred getrlimit mbstowcs_l memmove poll pstat readlink setproctitle setsid sigprocmask symlink sync_file_range towlower utime utimes wcstombs wcstombs_l])
+AC_CHECK_FUNCS([cbrt dlopen fdatasync getifaddrs getpeerucred getrlimit mbstowcs_l memmove poll posix_fallocate pstat readlink setproctitle setsid sigprocmask symlink sync_file_range towlower utime utimes wcstombs wcstombs_l])
 
 AC_REPLACE_FUNCS(fseeko)
 case $host_os in
@@ -1254,7 +1275,7 @@ PS_STRINGS->ps_argvstr = "foo";],
 [pgac_cv_var_PS_STRINGS=yes],
 [pgac_cv_var_PS_STRINGS=no])])
 if test "$pgac_cv_var_PS_STRINGS" = yes ; then
-  AC_DEFINE([HAVE_PS_STRINGS], [], [Define to 1 if the PS_STRINGS thing exists.])
+  AC_DEFINE([HAVE_PS_STRINGS], 1, [Define to 1 if the PS_STRINGS thing exists.])
 fi
 
 
@@ -1790,6 +1811,30 @@ if test "$with_tcl" = yes; then
     CPPFLAGS="$TCL_INCLUDE_SPEC $CPPFLAGS"
     AC_CHECK_HEADER(tcl.h, [], [AC_MSG_ERROR([header file <tcl.h> is required for Tcl])])
     CPPFLAGS=$ac_save_CPPFLAGS
+fi
+
+# check for <perl.h>
+if test "$with_perl" = yes; then
+  ac_save_CPPFLAGS=$CPPFLAGS
+  CPPFLAGS="$CPPFLAGS -I$perl_archlibexp/CORE"
+  AC_CHECK_HEADER(perl.h, [], [AC_MSG_ERROR([header file <perl.h> is required for Perl])],
+                  [#include <EXTERN.h>])
+  # While we're at it, check that we can link to libperl.
+  # On most platforms, if perl.h is there then libperl.so will be too, but at
+  # this writing Debian packages them separately.  There is no known reason to
+  # waste cycles on separate probes for the Tcl or Python libraries, though.
+  pgac_save_LIBS=$LIBS
+  LIBS="$perl_embed_ldflags"
+  AC_MSG_CHECKING([for libperl])
+  AC_TRY_LINK([
+#include <EXTERN.h>
+#include <perl.h>
+],  [perl_alloc();],
+    [AC_MSG_RESULT(yes)],
+    [AC_MSG_RESULT(no)
+     AC_MSG_ERROR([libperl library is required for Perl])])
+  LIBS=$pgac_save_LIBS
+  CPPFLAGS=$ac_save_CPPFLAGS
 fi
 
 # check for <Python.h>

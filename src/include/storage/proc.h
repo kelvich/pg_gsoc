@@ -4,7 +4,7 @@
  *	  per-process shared memory data structures
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/proc.h
@@ -168,8 +168,8 @@ typedef struct PGXACT
 
 	uint8		vacuumFlags;	/* vacuum-related flags, see above */
 	bool		overflowed;
-	bool		delayChkpt; 	/* true if this proc delays checkpoint start */
-								/* previously called InCommit */
+	bool		delayChkpt;		/* true if this proc delays checkpoint start;
+								 * previously called InCommit */
 
 	uint8		nxids;
 } PGXACT;
@@ -222,6 +222,7 @@ extern PGPROC *PreparedXactProcs;
 /* configurable options */
 extern int	DeadlockTimeout;
 extern int	StatementTimeout;
+extern int	LockTimeout;
 extern bool log_lock_waits;
 
 

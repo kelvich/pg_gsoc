@@ -1292,7 +1292,7 @@ EXECUTE 'UPDATE tbl SET '
     </para>
 
     <para>
-     Because <function>quote_literal</function> is labelled
+     Because <function>quote_literal</function> is labeled
      <literal>STRICT</literal>, it will always return null when called with a
      null argument.  In the above example, if <literal>newvalue</> or
      <literal>keyvalue</> were null, the entire dynamic query string would
@@ -1694,13 +1694,13 @@ CREATE TABLE foo (fooid INT, foosubid INT, fooname TEXT);
 INSERT INTO foo VALUES (1, 2, 'three');
 INSERT INTO foo VALUES (4, 5, 'six');
 
-CREATE OR REPLACE FUNCTION getAllFoo() RETURNS SETOF foo AS
+CREATE OR REPLACE FUNCTION get_all_foo() RETURNS SETOF foo AS
 $BODY$
 DECLARE
     r foo%rowtype;
 BEGIN
-    FOR r IN SELECT * FROM foo
-    WHERE fooid &gt; 0
+    FOR r IN
+        SELECT * FROM foo WHERE fooid &gt; 0
     LOOP
         -- can do some processing here
         RETURN NEXT r; -- return current row of SELECT
@@ -1708,9 +1708,39 @@ BEGIN
     RETURN;
 END
 $BODY$
-LANGUAGE 'plpgsql' ;
+LANGUAGE plpgsql;
 
-SELECT * FROM getallfoo();
+SELECT * FROM get_all_foo();
+</programlisting>
+     </para>
+
+     <para>
+      Here is an example of a function using <command>RETURN
+      QUERY</command>:
+
+<programlisting>
+CREATE FUNCTION get_available_flightid(date) RETURNS SETOF integer AS
+$BODY$
+BEGIN
+    RETURN QUERY SELECT flightid
+                   FROM flight
+                  WHERE flightdate >= $1
+                    AND flightdate < ($1 + 1);
+
+    -- Since execution is not finished, we can check whether rows were returned
+    -- and raise exception if not.
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No flight at %.', $1;
+    END IF;
+
+    RETURN;
+ END
+$BODY$
+LANGUAGE plpgsql;
+
+-- Returns available flights or raises exception if there are no
+-- available flights.
+SELECT * FROM get_available_flightid(CURRENT_DATE);
 </programlisting>
      </para>
 
@@ -2077,11 +2107,11 @@ EXIT <optional> <replaceable>label</replaceable> </optional> <optional> WHEN <re
         When used with a
         <literal>BEGIN</literal> block, <literal>EXIT</literal> passes
         control to the next statement after the end of the block.
-        Note that a label must be used for this purpose; an unlabelled
+        Note that a label must be used for this purpose; an unlabeled
         <literal>EXIT</literal> is never considered to match a
         <literal>BEGIN</literal> block.  (This is a change from
         pre-8.4 releases of <productname>PostgreSQL</productname>, which
-        would allow an unlabelled <literal>EXIT</literal> to match
+        would allow an unlabeled <literal>EXIT</literal> to match
         a <literal>BEGIN</literal> block.)
        </para>
 
@@ -2583,6 +2613,15 @@ SELECT merge_db(1, 'dennis');
      expected.
     </para>
     </example>
+  </sect2>
+
+   <sect2 id="plpgsql-diagnostics">
+    <title>Getting Diagnostics Information</title>
+
+    <indexterm>
+     <primary>diagnostics</primary>
+     <secondary>in PL/pgSQL</secondary>
+    </indexterm>
 
    <sect3 id="plpgsql-exception-diagnostics">
     <title>Obtaining information about an error</title>
@@ -2635,9 +2674,34 @@ GET STACKED DIAGNOSTICS <replaceable>variable</replaceable> = <replaceable>item<
          <entry>the SQLSTATE error code of the exception</entry>
         </row>
         <row>
+         <entry><literal>COLUMN_NAME</literal></entry>
+         <entry>text</entry>
+         <entry>the name of column related to exception</entry>
+        </row>
+        <row>
+         <entry><literal>CONSTRAINT_NAME</literal></entry>
+         <entry>text</entry>
+         <entry>the name of constraint related to exception</entry>
+        </row>
+        <row>
+         <entry><literal>PG_DATATYPE_NAME</literal></entry>
+         <entry>text</entry>
+         <entry>the name of datatype related to exception</entry>
+        </row>
+        <row>
          <entry><literal>MESSAGE_TEXT</literal></entry>
          <entry>text</entry>
          <entry>the text of the exception's primary message</entry>
+        </row>
+        <row>
+         <entry><literal>TABLE_NAME</literal></entry>
+         <entry>text</entry>
+         <entry>the name of table related to exception</entry>
+        </row>
+        <row>
+         <entry><literal>SCHEMA_NAME</literal></entry>
+         <entry>text</entry>
+         <entry>the name of schema related to exception</entry>
         </row>
         <row>
          <entry><literal>PG_EXCEPTION_DETAIL</literal></entry>
@@ -2681,6 +2745,54 @@ END;
 </programlisting>
     </para>
    </sect3>
+
+  <sect3 id="plpgsql-get-diagnostics-context">
+   <title>Obtaining the call stack context information</title>
+
+   <para>
+
+<synopsis>
+GET <optional> CURRENT </optional> DIAGNOSTICS <replaceable>variable</replaceable> = <replaceable>PG_CONTEXT</replaceable> <optional> , ... </optional>;
+</synopsis>
+
+
+    Calling <command>GET DIAGNOSTICS</command> with status
+    item <varname>PG_CONTEXT</> will return a text string with line(s) of
+    text describing the call stack.  The first row refers to the
+    current function and currently executing <command>GET DIAGNOSTICS</command>
+    command.  The second and any subsequent rows refer to the calling functions
+    up the call stack.
+
+<programlisting>
+CREATE OR REPLACE FUNCTION public.outer_func() RETURNS integer AS $$
+BEGIN
+  RETURN inner_func();
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION public.inner_func() RETURNS integer AS  $$
+DECLARE
+  stack text;
+BEGIN
+  GET DIAGNOSTICS stack = PG_CONTEXT;
+  RAISE NOTICE e'--- Call Stack ---\n%', stack;
+  RETURN 1;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT outer_func();
+
+NOTICE:  --- Call Stack ---
+PL/pgSQL function inner_func() line 4 at GET DIAGNOSTICS
+PL/pgSQL function outer_func() line 3 at RETURN
+ outer_func
+ ------------
+           1
+(1 row)
+</programlisting>
+
+   </para>
+  </sect3>
   </sect2>
   </sect1>
 
@@ -3323,6 +3435,17 @@ RAISE NOTICE 'Calling cs_create_job(%)', v_job_id;
        <para>Specifies the error code (SQLSTATE) to report, either by condition
         name, as shown in <xref linkend="errcodes-appendix">, or directly as a
         five-character SQLSTATE code.</para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><literal>COLUMN</literal></term>
+      <term><literal>CONSTRAINT</literal></term>
+      <term><literal>DATATYPE</literal></term>
+      <term><literal>TABLE</literal></term>
+      <term><literal>SCHEMA</literal></term>
+      <listitem>
+       <para>Supplies the name of a related object.</para>
       </listitem>
      </varlistentry>
     </variablelist>
@@ -4258,7 +4381,9 @@ $$ LANGUAGE plpgsql;
     on specific parameter values, and caching that for re-use.  Typically
     this will happen only if the execution plan is not very sensitive to
     the values of the <application>PL/pgSQL</> variables referenced in it.
-    If it is, generating a plan each time is a net win.
+    If it is, generating a plan each time is a net win.  See <xref
+    linkend="sql-prepare"> for more information about the behavior of
+    prepared statements.
    </para>
 
    <para>

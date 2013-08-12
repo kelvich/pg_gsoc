@@ -185,7 +185,7 @@
 //#define HAVE_INTTYPES_H 1
 
 /* Define to 1 if you have the global variable 'int timezone'. */
-#define HAVE_INT_TIMEZONE
+#define HAVE_INT_TIMEZONE 1
 
 /* Define to 1 if you have support for IPv6. */
 #define HAVE_IPV6 1
@@ -275,6 +275,9 @@
 
 /* Define to 1 if you have the <poll.h> header file. */
 /* #undef HAVE_POLL_H */
+
+/* Define to 1 if you have the `posix_fallocate' function. */
+/* #undef HAVE_POSIX_FALLOCATE */
 
 /* Define to 1 if you have the POSIX signal interface. */
 /* #undef HAVE_POSIX_SIGNALS */
@@ -526,11 +529,20 @@
 /* Define to 1 if you have the <winldap.h> header file. */
 /* #undef HAVE_WINLDAP_H */
 
+/* Define to 1 if your compiler understands __builtin_constant_p. */
+/* #undef HAVE__BUILTIN_CONSTANT_P */
+
 /* Define to 1 if your compiler understands __builtin_types_compatible_p. */
 /* #undef HAVE__BUILTIN_TYPES_COMPATIBLE_P */
 
+/* Define to 1 if your compiler understands __builtin_unreachable. */
+/* #undef HAVE__BUILTIN_UNREACHABLE */
+
 /* Define to 1 if your compiler understands _Static_assert. */
 /* #undef HAVE__STATIC_ASSERT */
+
+/* Define to 1 if your compiler understands __VA_ARGS__ in macros. */
+#define HAVE__VA_ARGS 1
 
 /* Define to the appropriate snprintf format for 64-bit ints, if any. */
 #define INT64_FORMAT "%lld"
@@ -557,19 +569,19 @@
 #define PACKAGE_NAME "PostgreSQL"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "PostgreSQL 9.3devel"
+#define PACKAGE_STRING "PostgreSQL 9.4devel"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "9.3devel"
+#define PACKAGE_VERSION "9.4devel"
 
 /* Define to the name of a signed 64-bit integer type. */
 #define PG_INT64_TYPE long long int
 
 /* PostgreSQL version as a string */
-#define PG_VERSION "9.3devel"
+#define PG_VERSION "9.4devel"
 
 /* PostgreSQL version as a number */
-#define PG_VERSION_NUM 90300
+#define PG_VERSION_NUM 90400
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "postgresql"
@@ -654,7 +666,7 @@
 /* #undef USE_UNNAMED_POSIX_SEMAPHORES */
 
 /* Define to select Win32-style semaphores. */
-#define USE_WIN32_SEMAPHORES
+#define USE_WIN32_SEMAPHORES 1
 
 /* Number of bits in a file offset, on hosts where this is settable. */
 /* #undef _FILE_OFFSET_BITS */

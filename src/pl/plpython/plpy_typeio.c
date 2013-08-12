@@ -16,6 +16,7 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/numeric.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -35,7 +36,7 @@ static void PLy_output_datum_func2(PLyObToDatum *arg, HeapTuple typeTup);
 static PyObject *PLyBool_FromBool(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyFloat_FromFloat4(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyFloat_FromFloat8(PLyDatumToOb *arg, Datum d);
-static PyObject *PLyFloat_FromNumeric(PLyDatumToOb *arg, Datum d);
+static PyObject *PLyDecimal_FromNumeric(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyInt_FromInt16(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyInt_FromInt32(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyLong_FromInt64(PLyDatumToOb *arg, Datum d);
@@ -200,7 +201,7 @@ PLy_output_tuple_funcs(PLyTypeInfo *arg, TupleDesc desc)
 		if (arg->out.r.atts)
 			PLy_free(arg->out.r.atts);
 		arg->out.r.natts = desc->natts;
-		arg->out.r.atts = PLy_malloc0(desc->natts * sizeof(PLyDatumToOb));
+		arg->out.r.atts = PLy_malloc0(desc->natts * sizeof(PLyObToDatum));
 	}
 
 	Assert(OidIsValid(desc->tdtypeid));
@@ -450,7 +451,7 @@ PLy_input_datum_func2(PLyDatumToOb *arg, Oid typeOid, HeapTuple typeTup)
 			arg->func = PLyFloat_FromFloat8;
 			break;
 		case NUMERICOID:
-			arg->func = PLyFloat_FromNumeric;
+			arg->func = PLyDecimal_FromNumeric;
 			break;
 		case INT2OID:
 			arg->func = PLyInt_FromInt16;
@@ -492,9 +493,15 @@ PLy_input_datum_func2(PLyDatumToOb *arg, Oid typeOid, HeapTuple typeTup)
 static PyObject *
 PLyBool_FromBool(PLyDatumToOb *arg, Datum d)
 {
+	/*
+	 * We would like to use Py_RETURN_TRUE and Py_RETURN_FALSE here for
+	 * generating SQL from trigger functions, but those are only supported in
+	 * Python >= 2.4, and we support older versions.
+	 * http://docs.python.org/api/boolObjects.html
+	 */
 	if (DatumGetBool(d))
-		Py_RETURN_TRUE;
-	Py_RETURN_FALSE;
+		return PyBool_FromLong(1);
+	return PyBool_FromLong(0);
 }
 
 static PyObject *
@@ -510,16 +517,37 @@ PLyFloat_FromFloat8(PLyDatumToOb *arg, Datum d)
 }
 
 static PyObject *
-PLyFloat_FromNumeric(PLyDatumToOb *arg, Datum d)
+PLyDecimal_FromNumeric(PLyDatumToOb *arg, Datum d)
 {
-	/*
-	 * Numeric is cast to a PyFloat: This results in a loss of precision Would
-	 * it be better to cast to PyString?
-	 */
-	Datum		f = DirectFunctionCall1(numeric_float8, d);
-	double		x = DatumGetFloat8(f);
+	static PyObject *decimal_constructor;
+	char	   *str;
+	PyObject   *pyvalue;
 
-	return PyFloat_FromDouble(x);
+	/* Try to import cdecimal.  If it doesn't exist, fall back to decimal. */
+	if (!decimal_constructor)
+	{
+		PyObject   *decimal_module;
+
+		decimal_module = PyImport_ImportModule("cdecimal");
+		if (!decimal_module)
+		{
+			PyErr_Clear();
+			decimal_module = PyImport_ImportModule("decimal");
+		}
+		if (!decimal_module)
+			PLy_elog(ERROR, "could not import a module for Decimal constructor");
+
+		decimal_constructor = PyObject_GetAttrString(decimal_module, "Decimal");
+		if (!decimal_constructor)
+			PLy_elog(ERROR, "no Decimal attribute in module");
+	}
+
+	str = DatumGetCString(DirectFunctionCall1(numeric_out, d));
+	pyvalue = PyObject_CallFunction(decimal_constructor, "s", str);
+	if (!pyvalue)
+		PLy_elog(ERROR, "conversion from numeric to Decimal failed");
+
+	return pyvalue;
 }
 
 static PyObject *

@@ -15,13 +15,13 @@
  * <parentTLI> <switchpoint> <reason>
  *
  *	parentTLI	ID of the parent timeline
- *	switchpoint	XLogRecPtr of the WAL position where the switch happened
+ *	switchpoint XLogRecPtr of the WAL position where the switch happened
  *	reason		human-readable explanation of why the timeline was changed
  *
  * The fields are separated by tabs. Lines beginning with # are comments, and
  * are ignored. Empty lines are also ignored.
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/timeline.c
@@ -39,6 +39,28 @@
 #include "access/xlog_internal.h"
 #include "access/xlogdefs.h"
 #include "storage/fd.h"
+
+/*
+ * Copies all timeline history files with id's between 'begin' and 'end'
+ * from archive to pg_xlog.
+ */
+void
+restoreTimeLineHistoryFiles(TimeLineID begin, TimeLineID end)
+{
+	char		path[MAXPGPATH];
+	char		histfname[MAXFNAMELEN];
+	TimeLineID	tli;
+
+	for (tli = begin; tli < end; tli++)
+	{
+		if (tli == 1)
+			continue;
+
+		TLHistoryFileName(histfname, tli);
+		if (RestoreArchivedFile(path, histfname, "RECOVERYHISTORY", 0, false))
+			KeepFileRestoredFromArchive(path, histfname);
+	}
+}
 
 /*
  * Try to read a timeline's history file.
@@ -59,6 +81,7 @@ readTimeLineHistory(TimeLineID targetTLI)
 	TimeLineHistoryEntry *entry;
 	TimeLineID	lasttli = 0;
 	XLogRecPtr	prevend;
+	bool		fromArchive = false;
 
 	/* Timeline 1 does not have a history file, so no need to check */
 	if (targetTLI == 1)
@@ -69,10 +92,11 @@ readTimeLineHistory(TimeLineID targetTLI)
 		return list_make1(entry);
 	}
 
-	if (InArchiveRecovery)
+	if (ArchiveRecoveryRequested)
 	{
 		TLHistoryFileName(histfname, targetTLI);
-		RestoreArchivedFile(path, histfname, "RECOVERYHISTORY", 0, false);
+		fromArchive =
+			RestoreArchivedFile(path, histfname, "RECOVERYHISTORY", 0, false);
 	}
 	else
 		TLHistoryFilePath(path, targetTLI);
@@ -126,7 +150,7 @@ readTimeLineHistory(TimeLineID targetTLI)
 		if (nfields != 3)
 			ereport(FATAL,
 					(errmsg("syntax error in history file: %s", fline),
-					 errhint("Expected an XLOG switchpoint location.")));
+					 errhint("Expected a transaction log switchpoint location.")));
 
 		if (result && tli <= lasttli)
 			ereport(FATAL,
@@ -155,8 +179,8 @@ readTimeLineHistory(TimeLineID targetTLI)
 			errhint("Timeline IDs must be less than child timeline's ID.")));
 
 	/*
-	 * Create one more entry for the "tip" of the timeline, which has no
-	 * entry in the history file.
+	 * Create one more entry for the "tip" of the timeline, which has no entry
+	 * in the history file.
 	 */
 	entry = (TimeLineHistoryEntry *) palloc(sizeof(TimeLineHistoryEntry));
 	entry->tli = targetTLI;
@@ -164,6 +188,13 @@ readTimeLineHistory(TimeLineID targetTLI)
 	entry->end = InvalidXLogRecPtr;
 
 	result = lcons(entry, result);
+
+	/*
+	 * If the history file was fetched from archive, save it in pg_xlog for
+	 * future reference.
+	 */
+	if (fromArchive)
+		KeepFileRestoredFromArchive(path, histfname);
 
 	return result;
 }
@@ -182,7 +213,7 @@ existsTimeLineHistory(TimeLineID probeTLI)
 	if (probeTLI == 1)
 		return false;
 
-	if (InArchiveRecovery)
+	if (ArchiveRecoveryRequested)
 	{
 		TLHistoryFileName(histfname, probeTLI);
 		RestoreArchivedFile(path, histfname, "RECOVERYHISTORY", 0, false);
@@ -285,7 +316,7 @@ writeTimeLineHistory(TimeLineID newTLI, TimeLineID parentTLI,
 	/*
 	 * If a history file exists for the parent, copy it verbatim
 	 */
-	if (InArchiveRecovery)
+	if (ArchiveRecoveryRequested)
 	{
 		TLHistoryFileName(histfname, parentTLI);
 		RestoreArchivedFile(path, histfname, "RECOVERYHISTORY", 0, false);
@@ -387,7 +418,7 @@ writeTimeLineHistory(TimeLineID newTLI, TimeLineID parentTLI,
 
 	/*
 	 * Prefer link() to rename() here just to be really sure that we don't
-	 * overwrite an existing file.  However, there shouldn't be one, so
+	 * overwrite an existing file.	However, there shouldn't be one, so
 	 * rename() is an acceptable substitute except for the truly paranoid.
 	 */
 #if HAVE_WORKING_LINK
@@ -499,7 +530,7 @@ writeTimeLineHistoryFile(TimeLineID tli, char *content, int size)
 bool
 tliInHistory(TimeLineID tli, List *expectedTLEs)
 {
-	ListCell *cell;
+	ListCell   *cell;
 
 	foreach(cell, expectedTLEs)
 	{
@@ -517,13 +548,14 @@ tliInHistory(TimeLineID tli, List *expectedTLEs)
 TimeLineID
 tliOfPointInHistory(XLogRecPtr ptr, List *history)
 {
-	ListCell *cell;
+	ListCell   *cell;
 
 	foreach(cell, history)
 	{
 		TimeLineHistoryEntry *tle = (TimeLineHistoryEntry *) lfirst(cell);
-		if ((XLogRecPtrIsInvalid(tle->begin) || XLByteLE(tle->begin, ptr)) &&
-			(XLogRecPtrIsInvalid(tle->end) || XLByteLT(ptr, tle->end)))
+
+		if ((XLogRecPtrIsInvalid(tle->begin) || tle->begin <= ptr) &&
+			(XLogRecPtrIsInvalid(tle->end) || ptr < tle->end))
 		{
 			/* found it */
 			return tle->tli;
@@ -532,30 +564,34 @@ tliOfPointInHistory(XLogRecPtr ptr, List *history)
 
 	/* shouldn't happen. */
 	elog(ERROR, "timeline history was not contiguous");
-	return 0;	/* keep compiler quiet */
+	return 0;					/* keep compiler quiet */
 }
 
 /*
- * Returns the point in history where we branched off the given timeline.
- * Returns InvalidXLogRecPtr if the timeline is current (= we have not
- * branched off from it), and throws an error if the timeline is not part of
- * this server's history.
+ * Returns the point in history where we branched off the given timeline,
+ * and the timeline we branched to (*nextTLI). Returns InvalidXLogRecPtr if
+ * the timeline is current, ie. we have not branched off from it, and throws
+ * an error if the timeline is not part of this server's history.
  */
 XLogRecPtr
-tliSwitchPoint(TimeLineID tli, List *history)
+tliSwitchPoint(TimeLineID tli, List *history, TimeLineID *nextTLI)
 {
 	ListCell   *cell;
 
-	foreach (cell, history)
+	if (nextTLI)
+		*nextTLI = 0;
+	foreach(cell, history)
 	{
 		TimeLineHistoryEntry *tle = (TimeLineHistoryEntry *) lfirst(cell);
 
 		if (tle->tli == tli)
 			return tle->end;
+		if (nextTLI)
+			*nextTLI = tle->tli;
 	}
 
 	ereport(ERROR,
 			(errmsg("requested timeline %u is not in this server's history",
 					tli)));
-	return InvalidXLogRecPtr; /* keep compiler quiet */
+	return InvalidXLogRecPtr;	/* keep compiler quiet */
 }

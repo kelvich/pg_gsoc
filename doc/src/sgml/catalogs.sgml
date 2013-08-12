@@ -1597,8 +1597,8 @@
    The catalog <structname>pg_class</structname> catalogs tables and most
    everything else that has columns or is otherwise similar to a
    table.  This includes indexes (but see also
-   <structname>pg_index</structname>), sequences, views, composite types,
-   and TOAST tables; see <structfield>relkind</>.
+   <structname>pg_index</structname>), sequences, views, materialized
+   views, composite types, and TOAST tables; see <structfield>relkind</>.
    Below, when we mean all of these
    kinds of objects we speak of <quote>relations</quote>.  Not all
    columns are meaningful for all relation types.
@@ -1745,15 +1745,6 @@
      </row>
 
      <row>
-      <entry><structfield>reltoastidxid</structfield></entry>
-      <entry><type>oid</type></entry>
-      <entry><literal><link linkend="catalog-pg-class"><structname>pg_class</structname></link>.oid</literal></entry>
-      <entry>
-       For a TOAST table, the OID of its index.  0 if not a TOAST table.
-      </entry>
-     </row>
-
-     <row>
       <entry><structfield>relhasindex</structfield></entry>
       <entry><type>bool</type></entry>
       <entry></entry>
@@ -1789,8 +1780,9 @@
       <entry></entry>
       <entry>
        <literal>r</> = ordinary table, <literal>i</> = index,
-       <literal>S</> = sequence, <literal>v</> = view, <literal>c</> =
-       composite type, <literal>t</> = TOAST table,
+       <literal>S</> = sequence, <literal>v</> = view,
+       <literal>m</> = materialized view,
+       <literal>c</> = composite type, <literal>t</> = TOAST table,
        <literal>f</> = foreign table
       </entry>
      </row>
@@ -1863,6 +1855,14 @@
      </row>
 
      <row>
+      <entry><structfield>relispopulated</structfield></entry>
+      <entry><type>bool</type></entry>
+      <entry></entry>
+      <entry>True if relation is populated (this is true for all
+       relations other than some materialized views)</entry>
+     </row>
+
+     <row>
       <entry><structfield>relfrozenxid</structfield></entry>
       <entry><type>xid</type></entry>
       <entry></entry>
@@ -1870,6 +1870,19 @@
        All transaction IDs before this one have been replaced with a permanent
        (<quote>frozen</>) transaction ID in this table.  This is used to track
        whether the table needs to be vacuumed in order to prevent transaction
+       ID wraparound or to allow <literal>pg_clog</> to be shrunk.  Zero
+       (<symbol>InvalidTransactionId</symbol>) if the relation is not a table.
+      </entry>
+     </row>
+
+     <row>
+      <entry><structfield>relminmxid</structfield></entry>
+      <entry><type>xid</type></entry>
+      <entry></entry>
+      <entry>
+       All multitransaction IDs before this one have been replaced by a
+       transaction ID in this table.  This is used to track
+       whether the table needs to be vacuumed in order to prevent multitransaction ID
        ID wraparound or to allow <literal>pg_clog</> to be shrunk.  Zero
        (<symbol>InvalidTransactionId</symbol>) if the relation is not a table.
       </entry>
@@ -2609,6 +2622,20 @@
        transaction ID wraparound or to allow <literal>pg_clog</> to be shrunk.
        It is the minimum of the per-table
        <structname>pg_class</>.<structfield>relfrozenxid</> values.
+      </entry>
+     </row>
+
+     <row>
+      <entry><structfield>datminmxid</structfield></entry>
+      <entry><type>xid</type></entry>
+      <entry></entry>
+      <entry>
+       All multitransaction IDs before this one have been replaced with a
+       transaction ID in this database.  This is used to
+       track whether the database needs to be vacuumed in order to prevent
+       transaction ID wraparound or to allow <literal>pg_clog</> to be shrunk.
+       It is the minimum of the per-table
+       <structname>pg_class</>.<structfield>relminmxid</> values.
       </entry>
      </row>
 
@@ -5015,7 +5042,7 @@
       <entry><structfield>ev_attr</structfield></entry>
       <entry><type>int2</type></entry>
       <entry></entry>
-      <entry>The column this rule is for (currently, always zero to
+      <entry>The column this rule is for (currently, always -1 to
       indicate the whole table)</entry>
      </row>
 
@@ -6956,6 +6983,11 @@
      </row>
 
      <row>
+      <entry><link linkend="view-pg-matviews"><structname>pg_matviews</structname></link></entry>
+      <entry>materialized views</entry>
+     </row>
+
+     <row>
       <entry><link linkend="view-pg-prepared-statements"><structname>pg_prepared_statements</structname></link></entry>
       <entry>prepared statements</entry>
      </row>
@@ -7714,6 +7746,83 @@
 
  </sect1>
 
+ <sect1 id="view-pg-matviews">
+  <title><structname>pg_matviews</structname></title>
+
+  <indexterm zone="view-pg-matviews">
+   <primary>pg_matviews</primary>
+  </indexterm>
+
+  <indexterm zone="view-pg-matviews">
+   <primary>materialized views</primary>
+  </indexterm>
+
+  <para>
+   The view <structname>pg_matviews</structname> provides access to
+   useful information about each materialized view in the database.
+  </para>
+
+  <table>
+   <title><structname>pg_matviews</> Columns</title>
+
+   <tgroup cols="4">
+    <thead>
+     <row>
+      <entry>Name</entry>
+      <entry>Type</entry>
+      <entry>References</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+     <row>
+      <entry><structfield>schemaname</structfield></entry>
+      <entry><type>name</type></entry>
+      <entry><literal><link linkend="catalog-pg-namespace"><structname>pg_namespace</structname></link>.nspname</literal></entry>
+      <entry>Name of schema containing materialized view</entry>
+     </row>
+     <row>
+      <entry><structfield>matviewname</structfield></entry>
+      <entry><type>name</type></entry>
+      <entry><literal><link linkend="catalog-pg-class"><structname>pg_class</structname></link>.relname</literal></entry>
+      <entry>Name of materialized view</entry>
+     </row>
+     <row>
+      <entry><structfield>matviewowner</structfield></entry>
+      <entry><type>name</type></entry>
+      <entry><literal><link linkend="catalog-pg-authid"><structname>pg_authid</structname></link>.rolname</literal></entry>
+      <entry>Name of materialized view's owner</entry>
+     </row>
+     <row>
+      <entry><structfield>tablespace</structfield></entry>
+      <entry><type>name</type></entry>
+      <entry><literal><link linkend="catalog-pg-tablespace"><structname>pg_tablespace</structname></link>.spcname</literal></entry>
+      <entry>Name of tablespace containing materialized view (null if default for database)</entry>
+     </row>
+     <row>
+      <entry><structfield>hasindexes</structfield></entry>
+      <entry><type>boolean</type></entry>
+      <entry></entry>
+      <entry>True if materialized view has (or recently had) any indexes</entry>
+     </row>
+     <row>
+      <entry><structfield>ispopulated</structfield></entry>
+      <entry><type>boolean</type></entry>
+      <entry></entry>
+      <entry>True if materialized view is currently populated</entry>
+     </row>
+     <row>
+      <entry><structfield>definition</structfield></entry>
+      <entry><type>text</type></entry>
+      <entry></entry>
+      <entry>Materialized view definition (a reconstructed <command>SELECT</command> query)</entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+ </sect1>
+
  <sect1 id="view-pg-prepared-statements">
   <title><structname>pg_prepared_statements</structname></title>
 
@@ -8091,7 +8200,8 @@
 
   <para>
    The <structname>pg_rules</> view excludes the <literal>ON SELECT</> rules
-   of views; those can be seen in <structname>pg_views</>.
+   of views and materialized views; those can be seen in
+   <structname>pg_views</> and <structname>pg_matviews</>.
   </para>
 
  </sect1>

@@ -87,7 +87,7 @@
  * above.  Nonetheless, with large workMem we can have many tapes.
  *
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -211,8 +211,8 @@ struct Tuplesortstate
 								 * tuples to return? */
 	bool		boundUsed;		/* true if we made use of a bounded heap */
 	int			bound;			/* if bounded, the maximum number of tuples */
-	long		availMem;		/* remaining memory available, in bytes */
-	long		allowedMem;		/* total memory allowed, in bytes */
+	int64		availMem;		/* remaining memory available, in bytes */
+	int64		allowedMem;		/* total memory allowed, in bytes */
 	int			maxTapes;		/* number of tapes (Knuth's T) */
 	int			tapeRange;		/* maxTapes-1 (Knuth's P) */
 	MemoryContext sortcontext;	/* memory context holding all sort data */
@@ -276,6 +276,7 @@ struct Tuplesortstate
 	SortTuple  *memtuples;		/* array of SortTuple structs */
 	int			memtupcount;	/* number of tuples currently present */
 	int			memtupsize;		/* allocated length of memtuples array */
+	bool		growmemtuples;	/* memtuples' growth still underway? */
 
 	/*
 	 * While building initial runs, this is the current output run number
@@ -307,7 +308,7 @@ struct Tuplesortstate
 	int		   *mergenext;		/* first preread tuple for each source */
 	int		   *mergelast;		/* last preread tuple for each source */
 	int		   *mergeavailslots;	/* slots left for prereading each tape */
-	long	   *mergeavailmem;	/* availMem for prereading each tape */
+	int64	   *mergeavailmem;	/* availMem for prereading each tape */
 	int			mergefreelist;	/* head of freelist of recycled slots */
 	int			mergefirstfree; /* first slot never used in this merge */
 
@@ -363,6 +364,7 @@ struct Tuplesortstate
 	 * These variables are specific to the IndexTuple case; they are set by
 	 * tuplesort_begin_index_xxx and used only by the IndexTuple routines.
 	 */
+	Relation	heapRel;		/* table the index is being built on */
 	Relation	indexRel;		/* index being built */
 
 	/* These are specific to the index_btree subcase: */
@@ -563,13 +565,14 @@ tuplesort_begin_common(int workMem, bool randomAccess)
 	state->randomAccess = randomAccess;
 	state->bounded = false;
 	state->boundUsed = false;
-	state->allowedMem = workMem * 1024L;
+	state->allowedMem = workMem * (int64) 1024;
 	state->availMem = state->allowedMem;
 	state->sortcontext = sortcontext;
 	state->tapeset = NULL;
 
 	state->memtupcount = 0;
 	state->memtupsize = 1024;	/* initial guess */
+	state->growmemtuples = true;
 	state->memtuples = (SortTuple *) palloc(state->memtupsize * sizeof(SortTuple));
 
 	USEMEM(state, GetMemoryChunkSpace(state->memtuples));
@@ -718,7 +721,8 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 }
 
 Tuplesortstate *
-tuplesort_begin_index_btree(Relation indexRel,
+tuplesort_begin_index_btree(Relation heapRel,
+							Relation indexRel,
 							bool enforceUnique,
 							int workMem, bool randomAccess)
 {
@@ -749,6 +753,7 @@ tuplesort_begin_index_btree(Relation indexRel,
 	state->readtup = readtup_index;
 	state->reversedirection = reversedirection_index_btree;
 
+	state->heapRel = heapRel;
 	state->indexRel = indexRel;
 	state->indexScanKey = _bt_mkscankey_nodata(indexRel);
 	state->enforceUnique = enforceUnique;
@@ -759,7 +764,8 @@ tuplesort_begin_index_btree(Relation indexRel,
 }
 
 Tuplesortstate *
-tuplesort_begin_index_hash(Relation indexRel,
+tuplesort_begin_index_hash(Relation heapRel,
+						   Relation indexRel,
 						   uint32 hash_mask,
 						   int workMem, bool randomAccess)
 {
@@ -784,6 +790,7 @@ tuplesort_begin_index_hash(Relation indexRel,
 	state->readtup = readtup_index;
 	state->reversedirection = reversedirection_index_hash;
 
+	state->heapRel = heapRel;
 	state->indexRel = indexRel;
 
 	state->hash_mask = hash_mask;
@@ -954,45 +961,132 @@ tuplesort_end(Tuplesortstate *state)
 }
 
 /*
- * Grow the memtuples[] array, if possible within our memory constraint.
- * Return TRUE if able to enlarge the array, FALSE if not.
+ * Grow the memtuples[] array, if possible within our memory constraint.  We
+ * must not exceed INT_MAX tuples in memory or the caller-provided memory
+ * limit.  Return TRUE if we were able to enlarge the array, FALSE if not.
  *
- * At each increment we double the size of the array.  When we are short
- * on memory we could consider smaller increases, but because availMem
- * moves around with tuple addition/removal, this might result in thrashing.
- * Small increases in the array size are likely to be pretty inefficient.
+ * Normally, at each increment we double the size of the array.  When doing
+ * that would exceed a limit, we attempt one last, smaller increase (and then
+ * clear the growmemtuples flag so we don't try any more).  That allows us to
+ * use memory as fully as permitted; sticking to the pure doubling rule could
+ * result in almost half going unused.  Because availMem moves around with
+ * tuple addition/removal, we need some rule to prevent making repeated small
+ * increases in memtupsize, which would just be useless thrashing.  The
+ * growmemtuples flag accomplishes that and also prevents useless
+ * recalculations in this function.
  */
 static bool
 grow_memtuples(Tuplesortstate *state)
 {
+	int			newmemtupsize;
+	int			memtupsize = state->memtupsize;
+	int64		memNowUsed = state->allowedMem - state->availMem;
+
+	/* Forget it if we've already maxed out memtuples, per comment above */
+	if (!state->growmemtuples)
+		return false;
+
+	/* Select new value of memtupsize */
+	if (memNowUsed <= state->availMem)
+	{
+		/*
+		 * We've used no more than half of allowedMem; double our usage,
+		 * clamping at INT_MAX tuples.
+		 */
+		if (memtupsize < INT_MAX / 2)
+			newmemtupsize = memtupsize * 2;
+		else
+		{
+			newmemtupsize = INT_MAX;
+			state->growmemtuples = false;
+		}
+	}
+	else
+	{
+		/*
+		 * This will be the last increment of memtupsize.  Abandon doubling
+		 * strategy and instead increase as much as we safely can.
+		 *
+		 * To stay within allowedMem, we can't increase memtupsize by more
+		 * than availMem / sizeof(SortTuple) elements.	In practice, we want
+		 * to increase it by considerably less, because we need to leave some
+		 * space for the tuples to which the new array slots will refer.  We
+		 * assume the new tuples will be about the same size as the tuples
+		 * we've already seen, and thus we can extrapolate from the space
+		 * consumption so far to estimate an appropriate new size for the
+		 * memtuples array.  The optimal value might be higher or lower than
+		 * this estimate, but it's hard to know that in advance.  We again
+		 * clamp at INT_MAX tuples.
+		 *
+		 * This calculation is safe against enlarging the array so much that
+		 * LACKMEM becomes true, because the memory currently used includes
+		 * the present array; thus, there would be enough allowedMem for the
+		 * new array elements even if no other memory were currently used.
+		 *
+		 * We do the arithmetic in float8, because otherwise the product of
+		 * memtupsize and allowedMem could overflow.  Any inaccuracy in the
+		 * result should be insignificant; but even if we computed a
+		 * completely insane result, the checks below will prevent anything
+		 * really bad from happening.
+		 */
+		double		grow_ratio;
+
+		grow_ratio = (double) state->allowedMem / (double) memNowUsed;
+		if (memtupsize * grow_ratio < INT_MAX)
+			newmemtupsize = (int) (memtupsize * grow_ratio);
+		else
+			newmemtupsize = INT_MAX;
+
+		/* We won't make any further enlargement attempts */
+		state->growmemtuples = false;
+	}
+
+	/* Must enlarge array by at least one element, else report failure */
+	if (newmemtupsize <= memtupsize)
+		goto noalloc;
+
+	/*
+	 * On a 32-bit machine, allowedMem could exceed MaxAllocHugeSize.  Clamp
+	 * to ensure our request won't be rejected.  Note that we can easily
+	 * exhaust address space before facing this outcome.  (This is presently
+	 * impossible due to guc.c's MAX_KILOBYTES limitation on work_mem, but
+	 * don't rely on that at this distance.)
+	 */
+	if ((Size) newmemtupsize >= MaxAllocHugeSize / sizeof(SortTuple))
+	{
+		newmemtupsize = (int) (MaxAllocHugeSize / sizeof(SortTuple));
+		state->growmemtuples = false;	/* can't grow any more */
+	}
+
 	/*
 	 * We need to be sure that we do not cause LACKMEM to become true, else
-	 * the space management algorithm will go nuts.  We assume here that the
-	 * memory chunk overhead associated with the memtuples array is constant
-	 * and so there will be no unexpected addition to what we ask for.	(The
-	 * minimum array size established in tuplesort_begin_common is large
-	 * enough to force palloc to treat it as a separate chunk, so this
-	 * assumption should be good.  But let's check it.)
+	 * the space management algorithm will go nuts.  The code above should
+	 * never generate a dangerous request, but to be safe, check explicitly
+	 * that the array growth fits within availMem.	(We could still cause
+	 * LACKMEM if the memory chunk overhead associated with the memtuples
+	 * array were to increase.	That shouldn't happen with any sane value of
+	 * allowedMem, because at any array size large enough to risk LACKMEM,
+	 * palloc would be treating both old and new arrays as separate chunks.
+	 * But we'll check LACKMEM explicitly below just in case.)
 	 */
-	if (state->availMem <= (long) (state->memtupsize * sizeof(SortTuple)))
-		return false;
+	if (state->availMem < (int64) ((newmemtupsize - memtupsize) * sizeof(SortTuple)))
+		goto noalloc;
 
-	/*
-	 * On a 64-bit machine, allowedMem could be high enough to get us into
-	 * trouble with MaxAllocSize, too.
-	 */
-	if ((Size) (state->memtupsize * 2) >= MaxAllocSize / sizeof(SortTuple))
-		return false;
-
+	/* OK, do it */
 	FREEMEM(state, GetMemoryChunkSpace(state->memtuples));
-	state->memtupsize *= 2;
+	state->memtupsize = newmemtupsize;
 	state->memtuples = (SortTuple *)
-		repalloc(state->memtuples,
-				 state->memtupsize * sizeof(SortTuple));
+		repalloc_huge(state->memtuples,
+					  state->memtupsize * sizeof(SortTuple));
 	USEMEM(state, GetMemoryChunkSpace(state->memtuples));
 	if (LACKMEM(state))
 		elog(ERROR, "unexpected out-of-memory situation during sort");
 	return true;
+
+noalloc:
+	/* If for any reason we didn't realloc, shut off future attempts */
+	state->growmemtuples = false;
+	return false;
 }
 
 /*
@@ -1630,7 +1724,7 @@ tuplesort_getdatum(Tuplesortstate *state, bool forward,
  * This is exported for use by the planner.  allowedMem is in bytes.
  */
 int
-tuplesort_merge_order(long allowedMem)
+tuplesort_merge_order(int64 allowedMem)
 {
 	int			mOrder;
 
@@ -1664,7 +1758,7 @@ inittapes(Tuplesortstate *state)
 	int			maxTapes,
 				ntuples,
 				j;
-	long		tapeSpace;
+	int64		tapeSpace;
 
 	/* Compute number of tapes to use: merge order plus 1 */
 	maxTapes = tuplesort_merge_order(state->allowedMem) + 1;
@@ -1694,7 +1788,7 @@ inittapes(Tuplesortstate *state)
 	 * account for tuple space, so we don't care if LACKMEM becomes
 	 * inaccurate.)
 	 */
-	tapeSpace = maxTapes * TAPE_BUFFER_OVERHEAD;
+	tapeSpace = (int64) maxTapes * TAPE_BUFFER_OVERHEAD;
 	if (tapeSpace + GetMemoryChunkSpace(state->memtuples) < state->allowedMem)
 		USEMEM(state, tapeSpace);
 
@@ -1713,7 +1807,7 @@ inittapes(Tuplesortstate *state)
 	state->mergenext = (int *) palloc0(maxTapes * sizeof(int));
 	state->mergelast = (int *) palloc0(maxTapes * sizeof(int));
 	state->mergeavailslots = (int *) palloc0(maxTapes * sizeof(int));
-	state->mergeavailmem = (long *) palloc0(maxTapes * sizeof(long));
+	state->mergeavailmem = (int64 *) palloc0(maxTapes * sizeof(int64));
 	state->tp_fib = (int *) palloc0(maxTapes * sizeof(int));
 	state->tp_runs = (int *) palloc0(maxTapes * sizeof(int));
 	state->tp_dummy = (int *) palloc0(maxTapes * sizeof(int));
@@ -1941,7 +2035,7 @@ mergeonerun(Tuplesortstate *state)
 	int			srcTape;
 	int			tupIndex;
 	SortTuple  *tup;
-	long		priorAvail,
+	int64		priorAvail,
 				spaceFreed;
 
 	/*
@@ -2015,7 +2109,7 @@ beginmerge(Tuplesortstate *state)
 	int			tapenum;
 	int			srcTape;
 	int			slotsPerTape;
-	long		spacePerTape;
+	int64		spacePerTape;
 
 	/* Heap should be empty here */
 	Assert(state->memtupcount == 0);
@@ -2136,7 +2230,7 @@ mergeprereadone(Tuplesortstate *state, int srcTape)
 	unsigned int tuplen;
 	SortTuple	stup;
 	int			tupIndex;
-	long		priorAvail,
+	int64		priorAvail,
 				spaceUsed;
 
 	if (!state->mergeactive[srcTape])
@@ -3091,7 +3185,9 @@ comparetup_index_btree(const SortTuple *a, const SortTuple *b,
 						RelationGetRelationName(state->indexRel)),
 				 errdetail("Key %s is duplicated.",
 						   BuildIndexValueDescription(state->indexRel,
-													  values, isnull))));
+													  values, isnull)),
+				 errtableconstraint(state->heapRel,
+								 RelationGetRelationName(state->indexRel))));
 	}
 
 	/*

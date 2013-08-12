@@ -175,11 +175,11 @@ enable_dtrace	= @enable_dtrace@
 enable_coverage	= @enable_coverage@
 enable_thread_safety	= @enable_thread_safety@
 
+python_enable_shared	= @python_enable_shared@
 python_includespec	= @python_includespec@
 python_libdir		= @python_libdir@
 python_libspec		= @python_libspec@
 python_additional_libs	= @python_additional_libs@
-python_configdir	= @python_configdir@
 python_majorversion	= @python_majorversion@
 python_version		= @python_version@
 
@@ -219,6 +219,7 @@ CC = @CC@
 GCC = @GCC@
 SUN_STUDIO_CC = @SUN_STUDIO_CC@
 CFLAGS = @CFLAGS@
+CFLAGS_VECTOR = @CFLAGS_VECTOR@
 
 # Kind-of compilers
 
@@ -243,14 +244,15 @@ LD = @LD@
 with_gnu_ld = @with_gnu_ld@
 ld_R_works = @ld_R_works@
 
-# We want -L for libpgport.a to be first in LDFLAGS.  We also need LDFLAGS
-# to be a "recursively expanded" variable, else adjustments to rpathdir
-# don't work right.  So we must NOT do LDFLAGS := something, meaning this has
-# to be done first and elsewhere we must only do LDFLAGS += something.
+# We want -L for libpgport.a and libpgcommon.a to be first in LDFLAGS.  We
+# also need LDFLAGS to be a "recursively expanded" variable, else adjustments
+# to rpathdir don't work right.  So we must NOT do LDFLAGS := something,
+# meaning this has to be done first and elsewhere we must only do LDFLAGS +=
+# something.
 ifdef PGXS
   LDFLAGS = -L$(libdir)
 else
-  LDFLAGS = -L$(top_builddir)/src/port
+  LDFLAGS = -L$(top_builddir)/src/port -L$(top_builddir)/src/common
 endif
 LDFLAGS += @LDFLAGS@
 
@@ -400,24 +402,36 @@ endif
 libpq = -L$(libpq_builddir) -lpq
 
 # This macro is for use by client executables (not libraries) that use libpq.
-# We force clients to pull symbols from the non-shared library libpgport
-# rather than pulling some libpgport symbols from libpq just because
-# libpq uses those functions too.  This makes applications less
+# We force clients to pull symbols from the non-shared libraries libpgport
+# and libpgcommon rather than pulling some libpgport symbols from libpq just
+# because libpq uses those functions too.  This makes applications less
 # dependent on changes in libpq's usage of pgport.  To do this we link to
 # pgport before libpq.  This does cause duplicate -lpgport's to appear
 # on client link lines.
 ifdef PGXS
-libpq_pgport = -L$(libdir) -lpgport $(libpq)
+libpq_pgport = -L$(libdir) -lpgport -lpgcommon $(libpq)
 else
-libpq_pgport = -L$(top_builddir)/src/port -lpgport $(libpq)
+libpq_pgport = -L$(top_builddir)/src/port -lpgport \
+			   -L$(top_builddir)/src/common -lpgcommon $(libpq)
 endif
 
-
+# If PGXS is not defined, build libpq and libpgport dependancies as required.
+# If the build is with PGXS, then these are supposed to be already built and
+# installed, and we just ensure that the expected files exist.
+ifndef PGXS
 submake-libpq:
 	$(MAKE) -C $(libpq_builddir) all
+else
+submake-libpq: $(libdir)/libpq.so ;
+endif
 
+ifndef PGXS
 submake-libpgport:
 	$(MAKE) -C $(top_builddir)/src/port all
+	$(MAKE) -C $(top_builddir)/src/common all
+else
+submake-libpgport: $(libdir)/libpgport.a $(libdir)/libpgcommon.a ;
+endif
 
 .PHONY: submake-libpq submake-libpgport
 
@@ -430,7 +444,7 @@ PL_TESTDB = pl_regression
 CONTRIB_TESTDB = contrib_regression
 ifneq ($(MODULE_big),)
   CONTRIB_TESTDB_MODULE = contrib_regression_$(MODULE_big)
-else 
+else
   ifneq ($(MODULES),)
     CONTRIB_TESTDB_MODULE = contrib_regression_$(MODULES)
   else
@@ -496,7 +510,7 @@ endif
 
 LIBOBJS = @LIBOBJS@
 
-LIBS := -lpgport $(LIBS)
+LIBS := -lpgport -lpgcommon $(LIBS)
 
 # to make ws2_32.lib the last library, and always link with shfolder,
 # so SHGetFolderName isn't picked up from shell32.dll
@@ -684,9 +698,12 @@ ifeq ($(GCC), yes)
 endif # GCC
 
 # Include all the dependency files generated for the current
-# directory. List /dev/null as dummy because if the wildcard expands
-# to nothing then make would complain.
--include $(wildcard $(DEPDIR)/*.Po) /dev/null
+# directory. Note that make would complain if include was called with
+# no arguments.
+Po_files := $(wildcard $(DEPDIR)/*.Po)
+ifneq (,$(Po_files))
+include $(Po_files)
+endif
 
 # hook for clean-up
 clean distclean maintainer-clean: clean-deps

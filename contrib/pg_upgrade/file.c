@@ -3,11 +3,11 @@
  *
  *	file system operations
  *
- *	Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2013, PostgreSQL Global Development Group
  *	contrib/pg_upgrade/file.c
  */
 
-#include "postgres.h"
+#include "postgres_fe.h"
 
 #include "pg_upgrade.h"
 
@@ -127,14 +127,13 @@ linkAndUpdateFile(pageCnvCtx *pageConverter,
 static int
 copy_file(const char *srcfile, const char *dstfile, bool force)
 {
-
 #define COPY_BUF_SIZE (50 * BLCKSZ)
 
 	int			src_fd;
 	int			dest_fd;
 	char	   *buffer;
 	int			ret = 0;
-	int         save_errno = 0;
+	int			save_errno = 0;
 
 	if ((srcfile == NULL) || (dstfile == NULL))
 		return -1;

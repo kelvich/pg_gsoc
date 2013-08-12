@@ -3,7 +3,7 @@
  * spi.c
  *				Server Programming Interface
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -49,8 +49,9 @@ static int	_SPI_curid = -1;
 static Portal SPI_cursor_open_internal(const char *name, SPIPlanPtr plan,
 						 ParamListInfo paramLI, bool read_only);
 
-static void _SPI_prepare_plan(const char *src, SPIPlanPtr plan,
-				  ParamListInfo boundParams);
+static void _SPI_prepare_plan(const char *src, SPIPlanPtr plan);
+
+static void _SPI_prepare_oneshot_plan(const char *src, SPIPlanPtr plan);
 
 static int _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 				  Snapshot snapshot, Snapshot crosscheck_snapshot,
@@ -125,6 +126,7 @@ SPI_connect(void)
 	_SPI_current->processed = 0;
 	_SPI_current->lastoid = InvalidOid;
 	_SPI_current->tuptable = NULL;
+	slist_init(&_SPI_current->tuptables);
 	_SPI_current->procCxt = NULL;		/* in case we fail to create 'em */
 	_SPI_current->execCxt = NULL;
 	_SPI_current->connectSubid = GetCurrentSubTransactionId();
@@ -165,7 +167,7 @@ SPI_finish(void)
 	/* Restore memory context as it was before procedure call */
 	MemoryContextSwitchTo(_SPI_current->savedcxt);
 
-	/* Release memory used in procedure call */
+	/* Release memory used in procedure call (including tuptables) */
 	MemoryContextDelete(_SPI_current->execCxt);
 	_SPI_current->execCxt = NULL;
 	MemoryContextDelete(_SPI_current->procCxt);
@@ -281,11 +283,35 @@ AtEOSubXact_SPI(bool isCommit, SubTransactionId mySubid)
 	 */
 	if (_SPI_current && !isCommit)
 	{
+		slist_mutable_iter siter;
+
 		/* free Executor memory the same as _SPI_end_call would do */
 		MemoryContextResetAndDeleteChildren(_SPI_current->execCxt);
-		/* throw away any partially created tuple-table */
-		SPI_freetuptable(_SPI_current->tuptable);
-		_SPI_current->tuptable = NULL;
+
+		/* throw away any tuple tables created within current subxact */
+		slist_foreach_modify(siter, &_SPI_current->tuptables)
+		{
+			SPITupleTable *tuptable;
+
+			tuptable = slist_container(SPITupleTable, next, siter.cur);
+			if (tuptable->subid >= mySubid)
+			{
+				/*
+				 * If we used SPI_freetuptable() here, its internal search of
+				 * the tuptables list would make this operation O(N^2).
+				 * Instead, just free the tuptable manually.  This should
+				 * match what SPI_freetuptable() does.
+				 */
+				slist_delete_current(&siter);
+				if (tuptable == _SPI_current->tuptable)
+					_SPI_current->tuptable = NULL;
+				if (tuptable == SPI_tuptable)
+					SPI_tuptable = NULL;
+				MemoryContextDelete(tuptable->tuptabcxt);
+			}
+		}
+		/* in particular we should have gotten rid of any in-progress table */
+		Assert(_SPI_current->tuptable == NULL);
 	}
 }
 
@@ -355,7 +381,7 @@ SPI_execute(const char *src, bool read_only, long tcount)
 	plan.magic = _SPI_PLAN_MAGIC;
 	plan.cursor_options = 0;
 
-	_SPI_prepare_plan(src, &plan, NULL);
+	_SPI_prepare_oneshot_plan(src, &plan);
 
 	res = _SPI_execute_plan(&plan, NULL,
 							InvalidSnapshot, InvalidSnapshot,
@@ -506,7 +532,7 @@ SPI_execute_with_args(const char *src,
 	paramLI = _SPI_convert_params(nargs, argtypes,
 								  Values, Nulls);
 
-	_SPI_prepare_plan(src, &plan, paramLI);
+	_SPI_prepare_oneshot_plan(src, &plan);
 
 	res = _SPI_execute_plan(&plan, paramLI,
 							InvalidSnapshot, InvalidSnapshot,
@@ -547,7 +573,7 @@ SPI_prepare_cursor(const char *src, int nargs, Oid *argtypes,
 	plan.parserSetup = NULL;
 	plan.parserSetupArg = NULL;
 
-	_SPI_prepare_plan(src, &plan, NULL);
+	_SPI_prepare_plan(src, &plan);
 
 	/* copy plan to procedure context */
 	result = _SPI_make_plan_non_temp(&plan);
@@ -584,7 +610,7 @@ SPI_prepare_params(const char *src,
 	plan.parserSetup = parserSetup;
 	plan.parserSetupArg = parserSetupArg;
 
-	_SPI_prepare_plan(src, &plan, NULL);
+	_SPI_prepare_plan(src, &plan);
 
 	/* copy plan to procedure context */
 	result = _SPI_make_plan_non_temp(&plan);
@@ -599,7 +625,8 @@ SPI_keepplan(SPIPlanPtr plan)
 {
 	ListCell   *lc;
 
-	if (plan == NULL || plan->magic != _SPI_PLAN_MAGIC || plan->saved)
+	if (plan == NULL || plan->magic != _SPI_PLAN_MAGIC ||
+		plan->saved || plan->oneshot)
 		return SPI_ERROR_ARGUMENT;
 
 	/*
@@ -938,6 +965,12 @@ SPI_gettype(TupleDesc tupdesc, int fnumber)
 	return result;
 }
 
+/*
+ * Get the data type OID for a column.
+ *
+ * There's nothing similar for typmod and typcollation.  The rare consumers
+ * thereof should inspect the TupleDesc directly.
+ */
 Oid
 SPI_gettypeid(TupleDesc tupdesc, int fnumber)
 {
@@ -1013,8 +1046,59 @@ SPI_freetuple(HeapTuple tuple)
 void
 SPI_freetuptable(SPITupleTable *tuptable)
 {
-	if (tuptable != NULL)
-		MemoryContextDelete(tuptable->tuptabcxt);
+	bool		found = false;
+
+	/* ignore call if NULL pointer */
+	if (tuptable == NULL)
+		return;
+
+	/*
+	 * Since this function might be called during error recovery, it seems
+	 * best not to insist that the caller be actively connected.  We just
+	 * search the topmost SPI context, connected or not.
+	 */
+	if (_SPI_connected >= 0)
+	{
+		slist_mutable_iter siter;
+
+		if (_SPI_current != &(_SPI_stack[_SPI_connected]))
+			elog(ERROR, "SPI stack corrupted");
+
+		/* find tuptable in active list, then remove it */
+		slist_foreach_modify(siter, &_SPI_current->tuptables)
+		{
+			SPITupleTable *tt;
+
+			tt = slist_container(SPITupleTable, next, siter.cur);
+			if (tt == tuptable)
+			{
+				slist_delete_current(&siter);
+				found = true;
+				break;
+			}
+		}
+	}
+
+	/*
+	 * Refuse the deletion if we didn't find it in the topmost SPI context.
+	 * This is primarily a guard against double deletion, but might prevent
+	 * other errors as well.  Since the worst consequence of not deleting a
+	 * tuptable would be a transient memory leak, this is just a WARNING.
+	 */
+	if (!found)
+	{
+		elog(WARNING, "attempt to delete invalid SPITupleTable %p", tuptable);
+		return;
+	}
+
+	/* for safety, reset global variables that might point at tuptable */
+	if (tuptable == _SPI_current->tuptable)
+		_SPI_current->tuptable = NULL;
+	if (tuptable == SPI_tuptable)
+		SPI_tuptable = NULL;
+
+	/* release all memory belonging to tuptable */
+	MemoryContextDelete(tuptable->tuptabcxt);
 }
 
 
@@ -1083,7 +1167,7 @@ SPI_cursor_open_with_args(const char *name,
 	paramLI = _SPI_convert_params(nargs, argtypes,
 								  Values, Nulls);
 
-	_SPI_prepare_plan(src, &plan, paramLI);
+	_SPI_prepare_plan(src, &plan);
 
 	/* We needn't copy the plan; SPI_cursor_open_internal will do so */
 
@@ -1130,6 +1214,7 @@ SPI_cursor_open_internal(const char *name, SPIPlanPtr plan,
 	Snapshot	snapshot;
 	MemoryContext oldcontext;
 	Portal		portal;
+	ErrorContextCallback spierrcontext;
 
 	/*
 	 * Check that the plan is something the Portal code will special-case as
@@ -1180,6 +1265,15 @@ SPI_cursor_open_internal(const char *name, SPIPlanPtr plan,
 									   plansource->query_string);
 
 	/*
+	 * Setup error traceback support for ereport(), in case GetCachedPlan
+	 * throws an error.
+	 */
+	spierrcontext.callback = _SPI_error_callback;
+	spierrcontext.arg = (void *) plansource->query_string;
+	spierrcontext.previous = error_context_stack;
+	error_context_stack = &spierrcontext;
+
+	/*
 	 * Note: for a saved plan, we mustn't have any failure occur between
 	 * GetCachedPlan and PortalDefineQuery; that would result in leaking our
 	 * plancache refcount.
@@ -1188,6 +1282,9 @@ SPI_cursor_open_internal(const char *name, SPIPlanPtr plan,
 	/* Replan if needed, and increment plan refcount for portal */
 	cplan = GetCachedPlan(plansource, paramLI, false);
 	stmt_list = cplan->stmt_list;
+
+	/* Pop the error context stack */
+	error_context_stack = spierrcontext.previous;
 
 	if (!plan->saved)
 	{
@@ -1550,6 +1647,65 @@ SPI_result_code_string(int code)
 	return buf;
 }
 
+/*
+ * SPI_plan_get_plan_sources --- get a SPI plan's underlying list of
+ * CachedPlanSources.
+ *
+ * This is exported so that pl/pgsql can use it (this beats letting pl/pgsql
+ * look directly into the SPIPlan for itself).	It's not documented in
+ * spi.sgml because we'd just as soon not have too many places using this.
+ */
+List *
+SPI_plan_get_plan_sources(SPIPlanPtr plan)
+{
+	Assert(plan->magic == _SPI_PLAN_MAGIC);
+	return plan->plancache_list;
+}
+
+/*
+ * SPI_plan_get_cached_plan --- get a SPI plan's generic CachedPlan,
+ * if the SPI plan contains exactly one CachedPlanSource.  If not,
+ * return NULL.  Caller is responsible for doing ReleaseCachedPlan().
+ *
+ * This is exported so that pl/pgsql can use it (this beats letting pl/pgsql
+ * look directly into the SPIPlan for itself).	It's not documented in
+ * spi.sgml because we'd just as soon not have too many places using this.
+ */
+CachedPlan *
+SPI_plan_get_cached_plan(SPIPlanPtr plan)
+{
+	CachedPlanSource *plansource;
+	CachedPlan *cplan;
+	ErrorContextCallback spierrcontext;
+
+	Assert(plan->magic == _SPI_PLAN_MAGIC);
+
+	/* Can't support one-shot plans here */
+	if (plan->oneshot)
+		return NULL;
+
+	/* Must have exactly one CachedPlanSource */
+	if (list_length(plan->plancache_list) != 1)
+		return NULL;
+	plansource = (CachedPlanSource *) linitial(plan->plancache_list);
+
+	/* Setup error traceback support for ereport() */
+	spierrcontext.callback = _SPI_error_callback;
+	spierrcontext.arg = (void *) plansource->query_string;
+	spierrcontext.previous = error_context_stack;
+	error_context_stack = &spierrcontext;
+
+	/* Get the generic plan for the query */
+	cplan = GetCachedPlan(plansource, NULL, plan->saved);
+	Assert(cplan == plansource->gplan);
+
+	/* Pop the error context stack */
+	error_context_stack = spierrcontext.previous;
+
+	return cplan;
+}
+
+
 /* =================== private functions =================== */
 
 /*
@@ -1576,6 +1732,8 @@ spi_dest_startup(DestReceiver *self, int operation, TupleDesc typeinfo)
 	if (_SPI_current->tuptable != NULL)
 		elog(ERROR, "improper call to spi_dest_startup");
 
+	/* We create the tuple table context as a child of procCxt */
+
 	oldcxt = _SPI_procmem();	/* switch to procedure memory context */
 
 	tuptabcxt = AllocSetContextCreate(CurrentMemoryContext,
@@ -1586,8 +1744,18 @@ spi_dest_startup(DestReceiver *self, int operation, TupleDesc typeinfo)
 	MemoryContextSwitchTo(tuptabcxt);
 
 	_SPI_current->tuptable = tuptable = (SPITupleTable *)
-		palloc(sizeof(SPITupleTable));
+		palloc0(sizeof(SPITupleTable));
 	tuptable->tuptabcxt = tuptabcxt;
+	tuptable->subid = GetCurrentSubTransactionId();
+
+	/*
+	 * The tuptable is now valid enough to be freed by AtEOSubXact_SPI, so put
+	 * it onto the SPI context's tuptables list.  This will ensure it's not
+	 * leaked even in the unlikely event the following few lines fail.
+	 */
+	slist_push_head(&_SPI_current->tuptables, &tuptable->next);
+
+	/* set up initial allocations */
 	tuptable->alloced = tuptable->free = 128;
 	tuptable->vals = (HeapTuple *) palloc(tuptable->alloced * sizeof(HeapTuple));
 	tuptable->tupdesc = CreateTupleDescCopy(typeinfo);
@@ -1645,10 +1813,6 @@ spi_printtup(TupleTableSlot *slot, DestReceiver *self)
  *
  * At entry, plan->argtypes and plan->nargs (or alternatively plan->parserSetup
  * and plan->parserSetupArg) must be valid, as must plan->cursor_options.
- * If boundParams isn't NULL then it represents parameter values that are made
- * available to the planner (as either estimates or hard values depending on
- * their PARAM_FLAG_CONST marking).  The boundParams had better match the
- * param type information embedded in the plan!
  *
  * Results are stored into *plan (specifically, plan->plancache_list).
  * Note that the result data is all in CurrentMemoryContext or child contexts
@@ -1657,13 +1821,12 @@ spi_printtup(TupleTableSlot *slot, DestReceiver *self)
  * parsing is also left in CurrentMemoryContext.
  */
 static void
-_SPI_prepare_plan(const char *src, SPIPlanPtr plan, ParamListInfo boundParams)
+_SPI_prepare_plan(const char *src, SPIPlanPtr plan)
 {
 	List	   *raw_parsetree_list;
 	List	   *plancache_list;
 	ListCell   *list_item;
 	ErrorContextCallback spierrcontext;
-	int			cursor_options = plan->cursor_options;
 
 	/*
 	 * Setup error traceback support for ereport()
@@ -1726,13 +1889,80 @@ _SPI_prepare_plan(const char *src, SPIPlanPtr plan, ParamListInfo boundParams)
 						   plan->nargs,
 						   plan->parserSetup,
 						   plan->parserSetupArg,
-						   cursor_options,
+						   plan->cursor_options,
 						   false);		/* not fixed result */
 
 		plancache_list = lappend(plancache_list, plansource);
 	}
 
 	plan->plancache_list = plancache_list;
+	plan->oneshot = false;
+
+	/*
+	 * Pop the error context stack
+	 */
+	error_context_stack = spierrcontext.previous;
+}
+
+/*
+ * Parse, but don't analyze, a querystring.
+ *
+ * This is a stripped-down version of _SPI_prepare_plan that only does the
+ * initial raw parsing.  It creates "one shot" CachedPlanSources
+ * that still require parse analysis before execution is possible.
+ *
+ * The advantage of using the "one shot" form of CachedPlanSource is that
+ * we eliminate data copying and invalidation overhead.  Postponing parse
+ * analysis also prevents issues if some of the raw parsetrees are DDL
+ * commands that affect validity of later parsetrees.  Both of these
+ * attributes are good things for SPI_execute() and similar cases.
+ *
+ * Results are stored into *plan (specifically, plan->plancache_list).
+ * Note that the result data is all in CurrentMemoryContext or child contexts
+ * thereof; in practice this means it is in the SPI executor context, and
+ * what we are creating is a "temporary" SPIPlan.  Cruft generated during
+ * parsing is also left in CurrentMemoryContext.
+ */
+static void
+_SPI_prepare_oneshot_plan(const char *src, SPIPlanPtr plan)
+{
+	List	   *raw_parsetree_list;
+	List	   *plancache_list;
+	ListCell   *list_item;
+	ErrorContextCallback spierrcontext;
+
+	/*
+	 * Setup error traceback support for ereport()
+	 */
+	spierrcontext.callback = _SPI_error_callback;
+	spierrcontext.arg = (void *) src;
+	spierrcontext.previous = error_context_stack;
+	error_context_stack = &spierrcontext;
+
+	/*
+	 * Parse the request string into a list of raw parse trees.
+	 */
+	raw_parsetree_list = pg_parse_query(src);
+
+	/*
+	 * Construct plancache entries, but don't do parse analysis yet.
+	 */
+	plancache_list = NIL;
+
+	foreach(list_item, raw_parsetree_list)
+	{
+		Node	   *parsetree = (Node *) lfirst(list_item);
+		CachedPlanSource *plansource;
+
+		plansource = CreateOneShotCachedPlan(parsetree,
+											 src,
+											 CreateCommandTag(parsetree));
+
+		plancache_list = lappend(plancache_list, plansource);
+	}
+
+	plan->plancache_list = plancache_list;
+	plan->oneshot = true;
 
 	/*
 	 * Pop the error context stack
@@ -1770,7 +2000,7 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 	 * Setup error traceback support for ereport()
 	 */
 	spierrcontext.callback = _SPI_error_callback;
-	spierrcontext.arg = NULL;
+	spierrcontext.arg = NULL;	/* we'll fill this below */
 	spierrcontext.previous = error_context_stack;
 	error_context_stack = &spierrcontext;
 
@@ -1815,6 +2045,47 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 		ListCell   *lc2;
 
 		spierrcontext.arg = (void *) plansource->query_string;
+
+		/*
+		 * If this is a one-shot plan, we still need to do parse analysis.
+		 */
+		if (plan->oneshot)
+		{
+			Node	   *parsetree = plansource->raw_parse_tree;
+			const char *src = plansource->query_string;
+			List	   *stmt_list;
+
+			/*
+			 * Parameter datatypes are driven by parserSetup hook if provided,
+			 * otherwise we use the fixed parameter list.
+			 */
+			if (plan->parserSetup != NULL)
+			{
+				Assert(plan->nargs == 0);
+				stmt_list = pg_analyze_and_rewrite_params(parsetree,
+														  src,
+														  plan->parserSetup,
+													   plan->parserSetupArg);
+			}
+			else
+			{
+				stmt_list = pg_analyze_and_rewrite(parsetree,
+												   src,
+												   plan->argtypes,
+												   plan->nargs);
+			}
+
+			/* Finish filling in the CachedPlanSource */
+			CompleteCachedPlan(plansource,
+							   stmt_list,
+							   NULL,
+							   plan->argtypes,
+							   plan->nargs,
+							   plan->parserSetup,
+							   plan->parserSetupArg,
+							   plan->cursor_options,
+							   false);	/* not fixed result */
+		}
 
 		/*
 		 * Replan if needed, and increment plan refcount.  If it's a saved
@@ -1916,10 +2187,10 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 
 				ProcessUtility(stmt,
 							   plansource->query_string,
+							   PROCESS_UTILITY_QUERY,
 							   paramLI,
 							   dest,
-							   completionTag,
-							   PROCESS_UTILITY_QUERY);
+							   completionTag);
 
 				/* Update "processed" if stmt returned tuples */
 				if (_SPI_current->tuptable)
@@ -2313,6 +2584,8 @@ _SPI_make_plan_non_temp(SPIPlanPtr plan)
 	/* Assert the input is a temporary SPIPlan */
 	Assert(plan->magic == _SPI_PLAN_MAGIC);
 	Assert(plan->plancxt == NULL);
+	/* One-shot plans can't be saved */
+	Assert(!plan->oneshot);
 
 	/*
 	 * Create a memory context for the plan, underneath the procedure context.
@@ -2330,6 +2603,7 @@ _SPI_make_plan_non_temp(SPIPlanPtr plan)
 	newplan = (SPIPlanPtr) palloc(sizeof(_SPI_plan));
 	newplan->magic = _SPI_PLAN_MAGIC;
 	newplan->saved = false;
+	newplan->oneshot = false;
 	newplan->plancache_list = NIL;
 	newplan->plancxt = plancxt;
 	newplan->cursor_options = plan->cursor_options;
@@ -2379,6 +2653,9 @@ _SPI_save_plan(SPIPlanPtr plan)
 	MemoryContext oldcxt;
 	ListCell   *lc;
 
+	/* One-shot plans can't be saved */
+	Assert(!plan->oneshot);
+
 	/*
 	 * Create a memory context for the plan.  We don't expect the plan to be
 	 * very large, so use smaller-than-default alloc parameters.  It's a
@@ -2395,6 +2672,7 @@ _SPI_save_plan(SPIPlanPtr plan)
 	newplan = (SPIPlanPtr) palloc(sizeof(_SPI_plan));
 	newplan->magic = _SPI_PLAN_MAGIC;
 	newplan->saved = false;
+	newplan->oneshot = false;
 	newplan->plancache_list = NIL;
 	newplan->plancxt = plancxt;
 	newplan->cursor_options = plan->cursor_options;

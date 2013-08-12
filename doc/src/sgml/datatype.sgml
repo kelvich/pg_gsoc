@@ -351,7 +351,7 @@
         <entry><type>bigint</></entry>
         <entry>8 bytes</entry>
         <entry>large-range integer</entry>
-        <entry>-9223372036854775808 to 9223372036854775807</entry>
+        <entry>-9223372036854775808 to +9223372036854775807</entry>
        </row>
 
        <row>
@@ -680,6 +680,17 @@ NUMERIC
      Numbers too close to zero that are not representable as distinct
      from zero will cause an underflow error.
     </para>
+
+    <note>
+     <para>
+      The <xref linkend="guc-extra-float-digits"> setting controls the
+      number of extra significant digits included when a floating point
+      value is converted to text for output.  With the default value of
+      <literal>0</literal>, the output is the same on every platform
+      supported by PostgreSQL.  Increasing it will produce output that
+      more accurately represents the stored value, but may be unportable.
+     </para>
+    </note>
 
     <indexterm>
      <primary>not a number</primary>
@@ -4098,7 +4109,7 @@ SET xmloption TO { DOCUMENT | CONTENT };
     representations of XML values, such as in the above examples.
     This would ordinarily mean that encoding declarations contained in
     XML data can become invalid as the character data is converted
-    to other encodings while travelling between client and server,
+    to other encodings while traveling between client and server,
     because the embedded encoding declaration is not changed.  To cope
     with this behavior, encoding declarations contained in
     character strings presented for input to the <type>xml</type> type

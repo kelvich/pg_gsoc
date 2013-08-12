@@ -10,7 +10,7 @@
  *	  Over time, this has also become the preferred place for widely known
  *	  resource-limitation stuff, such as work_mem and check_stack_depth().
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/miscadmin.h
@@ -141,6 +141,7 @@ extern PGDLLIMPORT char *DataDir;
 extern PGDLLIMPORT int NBuffers;
 extern int	MaxBackends;
 extern int	MaxConnections;
+extern int	max_worker_processes;
 
 extern PGDLLIMPORT int MyProcPid;
 extern PGDLLIMPORT pg_time_t MyStartTime;
@@ -342,7 +343,7 @@ typedef enum ProcessingMode
 
 extern ProcessingMode Mode;
 
-#define IsBootstrapProcessingMode()	(Mode == BootstrapProcessing)
+#define IsBootstrapProcessingMode() (Mode == BootstrapProcessing)
 #define IsInitProcessingMode()		(Mode == InitProcessing)
 #define IsNormalProcessingMode()	(Mode == NormalProcessing)
 
@@ -358,7 +359,7 @@ extern ProcessingMode Mode;
 
 
 /*
- * Auxiliary-process type identifiers.  These used to be in bootstrap.h
+ * Auxiliary-process type identifiers.	These used to be in bootstrap.h
  * but it seems saner to have them here, with the ProcessingMode stuff.
  * The MyAuxProcType global is defined and set in bootstrap.c.
  */
@@ -381,7 +382,7 @@ extern AuxProcType MyAuxProcType;
 
 #define AmBootstrapProcess()		(MyAuxProcType == BootstrapProcess)
 #define AmStartupProcess()			(MyAuxProcType == StartupProcess)
-#define AmBackgroundWriterProcess()	(MyAuxProcType == BgWriterProcess)
+#define AmBackgroundWriterProcess() (MyAuxProcType == BgWriterProcess)
 #define AmCheckpointerProcess()		(MyAuxProcType == CheckpointerProcess)
 #define AmWalWriterProcess()		(MyAuxProcType == WalWriterProcess)
 #define AmWalReceiverProcess()		(MyAuxProcType == WalReceiverProcess)
@@ -394,6 +395,7 @@ extern AuxProcType MyAuxProcType;
 
 /* in utils/init/postinit.c */
 extern void pg_split_opts(char **argv, int *argcp, char *optstr);
+extern void InitializeMaxBackends(void);
 extern void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 			 char *out_dbname);
 extern void BaseInit(void);
@@ -401,6 +403,7 @@ extern void BaseInit(void);
 /* in utils/init/miscinit.c */
 extern bool IgnoreSystemIndexes;
 extern PGDLLIMPORT bool process_shared_preload_libraries_in_progress;
+extern char *session_preload_libraries_string;
 extern char *shared_preload_libraries_string;
 extern char *local_preload_libraries_string;
 
@@ -436,9 +439,9 @@ extern void TouchSocketLockFiles(void);
 extern void AddToDataDirLockFile(int target_line, const char *str);
 extern void ValidatePgVersion(const char *path);
 extern void process_shared_preload_libraries(void);
-extern void process_local_preload_libraries(void);
+extern void process_session_preload_libraries(void);
 extern void pg_bindtextdomain(const char *domain);
-extern bool is_authenticated_user_replication_role(void);
+extern bool has_rolreplication(Oid roleid);
 
 /* in access/transam/xlog.c */
 extern bool BackupInProgress(void);

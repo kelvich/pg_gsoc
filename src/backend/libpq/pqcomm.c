@@ -27,7 +27,7 @@
  * the backend's "backend/libpq" is quite separate from "interfaces/libpq".
  * All that remains is similarities of names to trap the unwary...
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/libpq/pqcomm.c
@@ -808,7 +808,7 @@ pq_set_nonblocking(bool nonblocking)
 	{
 		if (!pg_set_noblock(MyProcPort->sock))
 			ereport(COMMERROR,
-				  (errmsg("could not set socket to non-blocking mode: %m")));
+					(errmsg("could not set socket to nonblocking mode: %m")));
 	}
 	else
 	{

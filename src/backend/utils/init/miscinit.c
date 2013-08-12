@@ -3,7 +3,7 @@
  * miscinit.c
  *	  miscellaneous initialization support stuff
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -390,15 +390,15 @@ SetUserIdAndContext(Oid userid, bool sec_def_context)
 
 
 /*
- * Check if the authenticated user is a replication role
+ * Check whether specified role has explicit REPLICATION privilege
  */
 bool
-is_authenticated_user_replication_role(void)
+has_rolreplication(Oid roleid)
 {
 	bool		result = false;
 	HeapTuple	utup;
 
-	utup = SearchSysCache1(AUTHOID, ObjectIdGetDatum(AuthenticatedUserId));
+	utup = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
 	if (HeapTupleIsValid(utup))
 	{
 		result = ((Form_pg_authid) GETSTRUCT(utup))->rolreplication;
@@ -498,8 +498,8 @@ void
 InitializeSessionUserIdStandalone(void)
 {
 	/*
-	 * This function should only be called in single-user mode, in
-	 * autovacuum workers, and in background workers.
+	 * This function should only be called in single-user mode, in autovacuum
+	 * workers, and in background workers.
 	 */
 	AssertState(!IsUnderPostmaster || IsAutoVacuumWorkerProcess() || IsBackgroundWorker);
 
@@ -894,7 +894,7 @@ CreateLockFile(const char *filename, bool amPostmaster,
 
 	/*
 	 * Successfully created the file, now fill it.	See comment in miscadmin.h
-	 * about the contents.  Note that we write the same first five lines into
+	 * about the contents.	Note that we write the same first five lines into
 	 * both datadir and socket lockfiles; although more stuff may get added to
 	 * the datadir lockfile later.
 	 */
@@ -948,9 +948,9 @@ CreateLockFile(const char *filename, bool amPostmaster,
 	}
 
 	/*
-	 * Arrange to unlink the lock file(s) at proc_exit.  If this is the
-	 * first one, set up the on_proc_exit function to do it; then add this
-	 * lock file to the list of files to unlink.
+	 * Arrange to unlink the lock file(s) at proc_exit.  If this is the first
+	 * one, set up the on_proc_exit function to do it; then add this lock file
+	 * to the list of files to unlink.
 	 */
 	if (lock_files == NIL)
 		on_proc_exit(UnlinkLockFiles, 0);
@@ -1077,8 +1077,8 @@ AddToDataDirLockFile(int target_line, const char *str)
 	srcbuffer[len] = '\0';
 
 	/*
-	 * Advance over lines we are not supposed to rewrite, then copy them
-	 * to destbuffer.
+	 * Advance over lines we are not supposed to rewrite, then copy them to
+	 * destbuffer.
 	 */
 	srcptr = srcbuffer;
 	for (lineno = 1; lineno < target_line; lineno++)
@@ -1222,6 +1222,7 @@ ValidatePgVersion(const char *path)
  * GUC variables: lists of library names to be preloaded at postmaster
  * start and at backend start
  */
+char	   *session_preload_libraries_string = NULL;
 char	   *shared_preload_libraries_string = NULL;
 char	   *local_preload_libraries_string = NULL;
 
@@ -1318,8 +1319,11 @@ process_shared_preload_libraries(void)
  * process any libraries that should be preloaded at backend start
  */
 void
-process_local_preload_libraries(void)
+process_session_preload_libraries(void)
 {
+	load_libraries(session_preload_libraries_string,
+				   "session_preload_libraries",
+				   false);
 	load_libraries(local_preload_libraries_string,
 				   "local_preload_libraries",
 				   true);
